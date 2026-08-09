@@ -8,6 +8,13 @@
       "when": 1786273082053,
       "tag": "0000_majestic_namor",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786275409975,
+      "tag": "0001_empty_kinsey_walden",
+      "breakpoints": true
     }
   ]
 }
