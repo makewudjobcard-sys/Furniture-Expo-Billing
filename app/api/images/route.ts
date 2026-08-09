@@ -1,8 +1,10 @@
 import { env } from "cloudflare:workers";
+import { isAuthenticated, unauthorized } from "../../lib/auth";
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 export async function POST(request: Request) {
+  if (!await isAuthenticated(request)) return unauthorized();
   try {
     const form = await request.formData();
     const value = form.get("image");

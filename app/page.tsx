@@ -268,6 +268,10 @@ async function uploadImage(file: File) {
 }
 
 export default function Home() {
+  const [authStatus, setAuthStatus] = useState<"checking" | "logged_out" | "logged_in">("checking");
+  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [loginError, setLoginError] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
   const [active, setActive] = useState<Page>("dashboard");
   const [state, setState] = useState<ExpoState>({
     products: [],
@@ -278,6 +282,7 @@ export default function Home() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
+  const [stockFilter, setStockFilter] = useState("all");
   const [busy, setBusy] = useState(true);
   const [online, setOnline] = useState(true);
   const [toast, setToast] = useState("");
@@ -285,6 +290,7 @@ export default function Home() {
   const [productImageFile, setProductImageFile] = useState<File | null>(null);
   const [productImagePreview, setProductImagePreview] = useState("");
   const [showProductForm, setShowProductForm] = useState(false);
+  const [stockEntry, setStockEntry] = useState<{ product: Product | null; quantity: number }>({ product: null, quantity: 1 });
   const [customer, setCustomer] = useState({
     name: "",
     phone: "",
@@ -323,16 +329,55 @@ export default function Home() {
   const [scanStatus, setScanStatus] = useState(
     "Point the camera at the product QR code.",
   );
+  const [manualScanCode, setManualScanCode] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const bulkImagesRef = useRef<HTMLInputElement>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
   const scanVideoRef = useRef<HTMLVideoElement>(null);
-  const scanStreamRef = useRef<MediaStream | null>(null);
+  const scanControlsRef = useRef<{ stop: () => void } | null>(null);
+  const billRequestIdRef = useRef("");
 
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 3400);
   }, []);
+
+  useEffect(() => {
+    let current = true;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result: { authenticated?: boolean }) => {
+        if (current) setAuthStatus(result.authenticated ? "logged_in" : "logged_out");
+      })
+      .catch(() => {
+        if (current) setAuthStatus("logged_out");
+      });
+    return () => { current = false; };
+  }, []);
+
+  async function submitLogin(event: FormEvent) {
+    event.preventDefault();
+    setLoginBusy(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(loginForm) });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Unable to sign in.");
+      setAuthStatus("logged_in");
+      setLoginForm({ username: "", password: "" });
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Unable to sign in.");
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, syncedAt: "" });
+    setCart([]);
+    setAuthStatus("logged_out");
+  }
 
   const load = useCallback(
     async (silent = false) => {
@@ -340,6 +385,7 @@ export default function Home() {
       try {
         const response = await fetch("/api/expo", { cache: "no-store" });
         const data = (await response.json()) as ExpoState & { error?: string };
+        if (response.status === 401) setAuthStatus("logged_out");
         if (!response.ok)
           throw new Error(data.error || "Cloud sync unavailable");
         setState(data);
@@ -366,8 +412,9 @@ export default function Home() {
   );
 
   useEffect(() => {
+    if (authStatus !== "logged_in") return;
     const initial = window.setTimeout(() => load(), 0);
-    const timer = window.setInterval(() => load(true), 12000);
+    const timer = window.setInterval(() => load(true), 6000);
     const refresh = () => load(true);
     window.addEventListener("focus", refresh);
     return () => {
@@ -375,7 +422,7 @@ export default function Home() {
       window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
     };
-  }, [load]);
+  }, [load, authStatus]);
 
   async function mutate(payload: Record<string, unknown>, success: string) {
     setBusy(true);
@@ -386,6 +433,7 @@ export default function Home() {
         body: JSON.stringify(payload),
       });
       const data = (await response.json()) as ExpoState & { error?: string };
+      if (response.status === 401) setAuthStatus("logged_out");
       if (!response.ok) throw new Error(data.error || "Unable to save");
       setState(data);
       setSettingsForm(data.settings || DEFAULT_SETTINGS);
@@ -416,6 +464,28 @@ export default function Home() {
           ].some((value) => value?.toLowerCase().includes(query))),
     );
   }, [state.products, search, category]);
+  const inventoryProducts = useMemo(() => filteredProducts.filter((product) =>
+    stockFilter === "all" ||
+    (stockFilter === "available" && product.stockQty > 2) ||
+    (stockFilter === "low" && product.stockQty > 0 && product.stockQty <= 2) ||
+    (stockFilter === "out" && product.stockQty <= 0),
+  ), [filteredProducts, stockFilter]);
+
+  async function adjustStock(product: Product, delta: number) {
+    if (delta < 0 && product.stockQty <= 0) return;
+    await mutate({ action: "adjustStock", id: product.id, delta }, `${product.code} stock ${delta > 0 ? "added" : "reduced"}.`);
+  }
+
+  function stockIn(product: Product) {
+    setStockEntry({ product, quantity: 1 });
+  }
+
+  async function saveStockEntry(event: FormEvent) {
+    event.preventDefault();
+    if (!stockEntry.product || stockEntry.quantity <= 0) return notify("Enter a valid stock quantity above zero.");
+    await adjustStock(stockEntry.product, Math.floor(stockEntry.quantity));
+    setStockEntry({ product: null, quantity: 1 });
+  }
   const filteredBills = useMemo(() => {
     const query = billSearch.toLowerCase().trim();
     return state.bills.filter(
@@ -624,10 +694,12 @@ export default function Home() {
       return notify("Customer name and phone number are required.");
     if (!online)
       return notify("Internet is required to confirm a bill safely.");
+    if (!billRequestIdRef.current) billRequestIdRef.current = crypto.randomUUID();
     const data = await mutate(
       {
         action: "createBill",
         bill: {
+          clientRequestId: billRequestIdRef.current,
           customerName: customer.name,
           customerPhone: customer.phone,
           customerAddress: customer.address,
@@ -656,6 +728,7 @@ export default function Home() {
       "Bill confirmed, GST calculated and stock synced.",
     );
     if (data) {
+      billRequestIdRef.current = "";
       const created = data.bills[0];
       setCart([]);
       setCustomer({
@@ -1104,70 +1177,54 @@ export default function Home() {
     popup.document.close();
   }
   const closeScanner = useCallback(() => {
-    scanStreamRef.current?.getTracks().forEach((track) => track.stop());
-    scanStreamRef.current = null;
+    scanControlsRef.current?.stop();
+    scanControlsRef.current = null;
     setScannerOpen(false);
   }, []);
   async function startScanner() {
     setScannerOpen(true);
     setScanStatus("Starting camera…");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-        audio: false,
-      });
-      scanStreamRef.current = stream;
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      const { BrowserQRCodeReader } = await import("@zxing/browser");
+      await new Promise((resolve) => setTimeout(resolve, 100));
       if (!scanVideoRef.current) return;
-      scanVideoRef.current.srcObject = stream;
-      await scanVideoRef.current.play();
-      const Detector = (
-        window as unknown as {
-          BarcodeDetector?: new (options: { formats: string[] }) => {
-            detect(
-              source: HTMLVideoElement,
-            ): Promise<Array<{ rawValue: string }>>;
-          };
-        }
-      ).BarcodeDetector;
-      if (!Detector) {
-        setScanStatus(
-          "QR camera detection is not available in this browser. Use product search/code instead.",
-        );
-        return;
-      }
-      const detector = new Detector({ formats: ["qr_code"] });
+      const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 180 });
       setScanStatus("Point the camera at the product QR code.");
-      const scan = async () => {
-        if (!scanStreamRef.current || !scanVideoRef.current) return;
-        try {
-          const codes = await detector.detect(scanVideoRef.current);
-          if (codes[0]?.rawValue) {
-            const code = codes[0].rawValue.trim().toUpperCase();
-            const product = state.products.find(
-              (item) => item.code.toUpperCase() === code,
-            );
-            if (product) {
-              addToCart(product);
-              notify(`${product.name} added by QR.`);
-              closeScanner();
-              return;
-            }
+      scanControlsRef.current = await reader.decodeFromConstraints(
+        { video: { facingMode: { ideal: "environment" } }, audio: false },
+        scanVideoRef.current,
+        (result, _error, controls) => {
+          if (!result) return;
+          const code = result.getText().trim().toUpperCase();
+          const product = state.products.find((item) => item.code.toUpperCase() === code);
+          if (product) {
+            controls.stop();
+            scanControlsRef.current = null;
+            addToCart(product);
+            notify(`${product.name} added by QR.`);
+            setScannerOpen(false);
+          } else {
             setScanStatus(`Code ${code} is not in inventory.`);
           }
-        } catch {
-          void 0;
         }
-        if (scanStreamRef.current) window.setTimeout(scan, 450);
-      };
-      scan();
+      );
     } catch (error) {
       setScanStatus(
         error instanceof Error
-          ? error.message
-          : "Camera permission unavailable.",
+          ? `Camera unavailable: ${error.message}`
+          : "Camera permission unavailable. Allow camera access and retry.",
       );
     }
+  }
+
+  function submitManualScan() {
+    const code = manualScanCode.trim().toUpperCase();
+    const product = state.products.find((item) => item.code.toUpperCase() === code);
+    if (!product) return setScanStatus(code ? `Code ${code} is not in inventory.` : "Enter a product code.");
+    addToCart(product);
+    notify(`${product.name} added by product code.`);
+    setManualScanCode("");
+    closeScanner();
   }
 
   const totalStock = state.products.reduce(
@@ -1197,6 +1254,29 @@ export default function Home() {
       (bill) => deliveryBucket(bill) === "delivered",
     ).length,
   };
+
+  if (authStatus === "checking") {
+    return <div className="login-shell"><div className="login-loading"><span>FE</span><strong>Furniture Expo</strong><small>Opening secure billing desk…</small></div></div>;
+  }
+
+  if (authStatus === "logged_out") {
+    return (
+      <div className="login-shell">
+        <section className="login-card">
+          <div className="login-brand"><span>FE</span><div><strong>Furniture Expo</strong><small>Cloud Billing & Inventory</small></div></div>
+          <div className="login-copy"><span className="eyebrow">Authorised counter access</span><h1>Welcome back.</h1><p>Sign in to continue. Every bill, stock update and product image stays synced across your PCs and mobiles.</p></div>
+          <form onSubmit={submitLogin}>
+            <label>Username<input value={loginForm.username} onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value })} autoComplete="username" required /></label>
+            <label>Password<input type="password" value={loginForm.password} onChange={(event) => setLoginForm({ ...loginForm, password: event.target.value })} autoComplete="current-password" required /></label>
+            {loginError && <div className="login-error" role="alert">{loginError}</div>}
+            <button className="primary-action" disabled={loginBusy}>{loginBusy ? "Signing in…" : "Open billing desk"}<span>→</span></button>
+          </form>
+          <div className="login-assurance"><span>● Live cloud data</span><span>GST-ready invoices</span><span>Mobile + PC</span></div>
+        </section>
+        <aside className="login-visual"><span className="eyebrow">Expo operations</span><h2>One stock.<br />Every counter.</h2><p>Ready stock, Against Order, collections and deliveries—kept together in real time.</p><div className="login-stats"><div><strong>6 sec</strong><small>Auto sync</small></div><div><strong>100%</strong><small>Cloud saved</small></div><div><strong>QR</strong><small>Fast billing</small></div></div></aside>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -1266,6 +1346,7 @@ export default function Home() {
             ↻
           </button>
         </div>
+        <button className="sidebar-logout" onClick={logout}>↪ Sign out</button>
       </aside>
       <main className="main-content">
         <header className="mobile-header">
@@ -1276,13 +1357,7 @@ export default function Home() {
               <small>{online ? "Cloud live" : "Offline"}</small>
             </div>
           </div>
-          <button
-            className="icon-button"
-            onClick={() => load()}
-            aria-label="Sync now"
-          >
-            ↻
-          </button>
+          <div className="mobile-head-actions"><button className="icon-button" onClick={() => load()} aria-label="Sync now">↻</button><button className="icon-button" onClick={logout} aria-label="Sign out">↪</button></div>
         </header>
         <div className="mobile-tabs" role="tablist">
           <Nav
@@ -1942,6 +2017,9 @@ export default function Home() {
                   placeholder="Find in inventory…"
                 />
               </label>
+              <div className="stock-filters" aria-label="Stock filters">
+                {[["all", "All"], ["available", "Available"], ["low", "Low"], ["out", "Out"]].map(([key, label]) => <button key={key} className={stockFilter === key ? "active" : ""} onClick={() => setStockFilter(key)}>{label}</button>)}
+              </div>
               <button className="text-button" onClick={() => load()}>
                 ↻ Refresh stock
               </button>
@@ -1959,7 +2037,7 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProducts.map((product) => (
+                  {inventoryProducts.map((product) => (
                     <tr key={product.id}>
                       <td>
                         <div className="table-product">
@@ -1989,11 +2067,12 @@ export default function Home() {
                         )}
                       </td>
                       <td>
-                        <span
-                          className={`stock-badge ${product.stockQty <= 2 ? "low" : ""}`}
-                        >
-                          {product.stockQty}
-                        </span>
+                        <div className={`stock-control ${product.stockQty <= 2 ? "low" : ""}`}>
+                          <button disabled={busy || product.stockQty <= 0} onClick={() => adjustStock(product, -1)} aria-label={`Reduce ${product.name} stock`}>−</button>
+                          <strong>{product.stockQty}</strong>
+                          <button disabled={busy} onClick={() => adjustStock(product, 1)} aria-label={`Add one ${product.name}`}>＋</button>
+                          <button className="stock-in" disabled={busy} onClick={() => stockIn(product)}>Stock in</button>
+                        </div>
                       </td>
                       <td>
                         <div className="row-actions">
@@ -2546,6 +2625,18 @@ export default function Home() {
           </section>
         )}
       </main>
+
+      {stockEntry.product && (
+        <div className="modal-backdrop">
+          <form className="modal-card stock-entry-modal" onSubmit={saveStockEntry}>
+            <div className="modal-head"><div><span className="eyebrow">Quick inventory</span><h2>Receive stock</h2></div><button type="button" onClick={() => setStockEntry({ product: null, quantity: 1 })}>×</button></div>
+            <div className="stock-entry-product"><ProductThumb product={stockEntry.product} /><div><strong>{stockEntry.product.name}</strong><small>{stockEntry.product.code} · Current stock {stockEntry.product.stockQty}</small></div></div>
+            <label className="stock-entry-field">Pieces received<input type="number" min="1" step="1" value={stockEntry.quantity} onChange={(event) => setStockEntry({ ...stockEntry, quantity: Math.max(1, Number(event.target.value) || 1) })} /></label>
+            <div className="stock-entry-result"><span>New ready stock</span><strong>{stockEntry.product.stockQty + Math.floor(stockEntry.quantity)}</strong></div>
+            <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setStockEntry({ product: null, quantity: 1 })}>Cancel</button><button className="primary-small" disabled={busy}>Add to stock</button></div>
+          </form>
+        </div>
+      )}
 
       {showProductForm && (
         <div className="modal-backdrop">
@@ -3130,6 +3221,7 @@ export default function Home() {
             </div>
             <video ref={scanVideoRef} playsInline muted />
             <p>{scanStatus}</p>
+            <div className="manual-scan"><input value={manualScanCode} onChange={(event) => setManualScanCode(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submitManualScan()} placeholder="Or enter product code" /><button className="primary-small" onClick={submitManualScan}>Add</button></div>
             <button className="secondary-action" onClick={closeScanner}>
               Close scanner
             </button>

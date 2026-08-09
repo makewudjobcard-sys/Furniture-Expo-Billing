@@ -20,6 +20,7 @@ export const products = sqliteTable("products", {
 export const bills = sqliteTable("bills", {
   id: text("id").primaryKey(),
   billNo: text("bill_no").notNull().unique(),
+  clientRequestId: text("client_request_id").notNull().default(""),
   customerName: text("customer_name").notNull().default("Walk-in Customer"),
   customerPhone: text("customer_phone").notNull().default(""),
   customerAddress: text("customer_address").notNull().default(""),

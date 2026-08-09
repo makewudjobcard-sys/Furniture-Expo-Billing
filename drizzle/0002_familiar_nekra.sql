@@ -1,0 +1,1 @@
+ALTER TABLE `bills` ADD `client_request_id` text DEFAULT '' NOT NULL;

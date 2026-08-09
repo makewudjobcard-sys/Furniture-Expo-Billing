@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { isAuthenticated, unauthorized } from "../../lib/auth";
 
 type ProductInput = {
   id?: string; code?: string; hsnCode?: string; name?: string; category?: string;
@@ -77,6 +78,7 @@ async function ensureSchema() {
 
   const additions: Array<["products" | "bills" | "settings", string, string]> = [
     ["products", "image_key", "TEXT NOT NULL DEFAULT ''"],
+    ["bills", "client_request_id", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "staff_name", "TEXT NOT NULL DEFAULT ''"], ["bills", "counter_name", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "product_total", "REAL NOT NULL DEFAULT 0"], ["bills", "against_order_extra", "REAL NOT NULL DEFAULT 0"],
     ["bills", "discount_type", "TEXT NOT NULL DEFAULT 'amount'"], ["bills", "discount_value", "REAL NOT NULL DEFAULT 0"],
@@ -91,6 +93,7 @@ async function ensureSchema() {
   ];
   for (const [table, column, definition] of additions) await ensureColumn(table, column, definition);
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_bills_delivery_date ON bills(delivery_date)").run();
+  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_client_request_id ON bills(client_request_id) WHERE client_request_id<>''").run();
 
   await db.prepare(`CREATE TRIGGER IF NOT EXISTS bill_stock_guard BEFORE INSERT ON bills BEGIN
     SELECT CASE WHEN EXISTS (
@@ -187,12 +190,14 @@ async function readState() {
   return { products, bills, settings, syncedAt: new Date().toISOString() };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!await isAuthenticated(request)) return unauthorized();
   try { await ensureSchema(); return Response.json(await readState(), { headers: { "Cache-Control": "no-store" } }); }
   catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Unable to load expo data" }, { status: 500 }); }
 }
 
 export async function POST(request: Request) {
+  if (!await isAuthenticated(request)) return unauthorized();
   try {
     await ensureSchema();
     const payload = await request.json() as Record<string, unknown>;
@@ -220,8 +225,18 @@ export async function POST(request: Request) {
       const row = await env.DB.prepare("SELECT image_key AS imageKey FROM products WHERE id=?").bind(id).first<{ imageKey: string }>();
       await env.DB.prepare("DELETE FROM products WHERE id=?").bind(id).run();
       if (row?.imageKey) await env.FILES.delete(row.imageKey);
+    } else if (action === "adjustStock") {
+      const id = clean(payload.id);
+      const parsedDelta = Number(payload.delta);
+      const delta = Number.isFinite(parsedDelta) ? Math.trunc(parsedDelta) : 0;
+      if (!id || delta === 0) return Response.json({ error: "Choose a product and stock quantity." }, { status: 400 });
+      const result = await env.DB.prepare("UPDATE products SET stock_qty=MAX(0,stock_qty+?),updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(delta, id).run();
+      if (!result.meta.changes) return Response.json({ error: "Product was not found." }, { status: 404 });
     } else if (action === "createBill") {
       const bill = payload.bill as Record<string, unknown>;
+      const clientRequestId = clean(bill?.clientRequestId) || crypto.randomUUID();
+      const existing = await env.DB.prepare("SELECT id FROM bills WHERE client_request_id=?").bind(clientRequestId).first();
+      if (existing) return Response.json(await readState(), { headers: { "Cache-Control": "no-store" } });
       const customerName = clean(bill?.customerName);
       const customerPhone = clean(bill?.customerPhone);
       if (!customerName || !customerPhone) return Response.json({ error: "Customer name and phone number are required." }, { status: 400 });
@@ -257,15 +272,17 @@ export async function POST(request: Request) {
       const history: PaymentRecord[] = paidAmount > 0 ? [{ id: uid("pay"), amount: paidAmount, mode: paymentMode, note: "Initial Payment", date: now.toISOString() }] : [];
       const counter = await env.DB.prepare("UPDATE counters SET value=value+1 WHERE key='bill' RETURNING value").first<{ value: number }>();
       const billNo = `${clean(setting?.billPrefix, "EXP").toUpperCase()}-${String(counter?.value || Date.now()).padStart(4, "0")}`;
-      await env.DB.prepare(`INSERT INTO bills
-        (id,bill_no,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
+      const inserted = await env.DB.prepare(`INSERT INTO bills
+        (id,bill_no,client_request_id,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
         product_total,against_order_extra,subtotal,discount_type,discount_value,discount,taxable_value,cgst,sgst,gst,
         grand_total,paid_amount,balance_amount,payment_mode,payment_history_json,delivery_date,delivery_status,status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .bind(uid("bill"), billNo, customerName, customerPhone, clean(bill.customerAddress), JSON.stringify(items),
+        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+        WHERE NOT EXISTS (SELECT 1 FROM bills WHERE client_request_id=?)`)
+        .bind(uid("bill"), billNo, clientRequestId, customerName, customerPhone, clean(bill.customerAddress), JSON.stringify(items),
           clean(bill.staffName), clean(bill.counterName, setting?.defaultCounter || "Counter 1"), productTotal,
           againstOrderExtra, subtotal, discountType, round2(discountValue), discount, taxableValue, cgst, sgst, gst,
-          grandTotal, paidAmount, balanceAmount, paymentMode, JSON.stringify(history), clean(bill.deliveryDate), "Pending", "confirmed").run();
+          grandTotal, paidAmount, balanceAmount, paymentMode, JSON.stringify(history), clean(bill.deliveryDate), "Pending", "confirmed", clientRequestId).run();
+      if (!inserted.meta.changes) return Response.json(await readState(), { headers: { "Cache-Control": "no-store" } });
     } else if (action === "cancelBill") {
       await env.DB.prepare("UPDATE bills SET status='cancelled' WHERE id=? AND status<>'cancelled'").bind(clean(payload.id)).run();
     } else if (action === "addPayment") {

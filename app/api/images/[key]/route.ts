@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
+import { isAuthenticated, unauthorized } from "../../../lib/auth";
 
-export async function GET(_request: Request, context: { params: Promise<{ key: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ key: string }> }) {
+  if (!await isAuthenticated(request)) return unauthorized();
   const { key: encoded } = await context.params;
   const key = decodeURIComponent(encoded);
   if (!key.startsWith("product-") || key.includes("..") || key.includes("/")) {
