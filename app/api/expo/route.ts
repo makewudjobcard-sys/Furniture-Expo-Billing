@@ -396,16 +396,29 @@ export async function POST(request: Request) {
     } else if (action === "deleteSupplierAssignment") {
       await env.DB.prepare("DELETE FROM supplier_assignments WHERE id=?").bind(clean(payload.id)).run();
     } else if (action === "importLegacySnapshot") {
-      const existingBills = await env.DB.prepare("SELECT COUNT(*) AS count FROM bills").first<{ count: number }>();
-      if (existingBills?.count) return Response.json({ error: "Import is only allowed before the first bill is created." }, { status: 409 });
       const snapshot = payload.snapshot as Record<string, unknown>;
       const products = Array.isArray(snapshot?.products) ? snapshot.products as ProductInput[] : [];
       const bills = Array.isArray(snapshot?.bills) ? snapshot.bills as Array<Record<string, unknown>> : [];
       const importedSettings = snapshot?.settings as Record<string, unknown> | undefined;
+      const snapshotBillKeys = new Set(bills.flatMap((bill) => [clean(bill.id), clean(bill.billNo)]).filter(Boolean));
+      const existingBillRows = await env.DB.prepare("SELECT id,bill_no AS billNo FROM bills").all<{ id: string; billNo: string }>();
+      if (existingBillRows.results.some((bill) => !snapshotBillKeys.has(bill.id) && !snapshotBillKeys.has(bill.billNo))) {
+        return Response.json({ error: "Import is only allowed before new bills are created in this app." }, { status: 409 });
+      }
       for (let index = 0; index < products.length; index += 60) await env.DB.batch(products.slice(index, index + 60).map(productUpsertStatement));
       for (const bill of bills) {
+        const billId = clean(bill.id);
+        const billNo = clean(bill.billNo);
+        const alreadyImported = await env.DB.prepare("SELECT id FROM bills WHERE id=? OR bill_no=? LIMIT 1").bind(billId, billNo).first();
+        if (alreadyImported) continue;
         const items = Array.isArray(bill.items) ? bill.items : [];
         const history = Array.isArray(bill.paymentHistory) ? bill.paymentHistory : [];
+        const readyStockItems = items.filter((item) => !item.againstOrder && clean(item.productId));
+        if (readyStockItems.length) {
+          await env.DB.batch(readyStockItems.map((item) => env.DB.prepare(
+            "UPDATE products SET stock_qty=stock_qty+? WHERE id=?"
+          ).bind(whole(item.qty, 1), clean(item.productId))));
+        }
         await env.DB.prepare(`INSERT OR IGNORE INTO bills
           (id,bill_no,client_request_id,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
           product_total,against_order_extra,subtotal,discount_type,discount_value,discount,taxable_value,cgst,sgst,gst,
@@ -419,6 +432,9 @@ export async function POST(request: Request) {
             round2(numeric(bill.balanceAmount)), clean(bill.paymentMode, "CASH"), JSON.stringify(history), clean(bill.deliveryDate),
             clean(bill.deliveryStatus, "Pending"), clean(bill.deliveredAt), clean(bill.status, "confirmed"), clean(bill.createdAt, new Date().toISOString())).run();
       }
+      // The snapshot already contains the final stock balance. Reapply it after
+      // historical bills so stock triggers cannot double-deduct old sales.
+      for (let index = 0; index < products.length; index += 60) await env.DB.batch(products.slice(index, index + 60).map(productUpsertStatement));
       if (importedSettings) {
         const counters = cleanList(importedSettings.counterNames, ["Counter 1"]);
         await env.DB.prepare(`UPDATE settings SET business_name=?,subtitle=?,gstin=?,phone=?,address=?,gst_rate=?,bill_prefix=?,
