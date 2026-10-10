@@ -14,6 +14,10 @@ type BillItemInput = {
 };
 
 type PaymentRecord = { id: string; amount: number; mode: string; note: string; date: string };
+type SupplierInput = { id?: string; name?: string; contactPerson?: string; phone?: string; gstin?: string; address?: string; categories?: string; bankDetails?: string; notes?: string; status?: string };
+type TaskInput = { id?: string; category?: string; title?: string; details?: string; assignedTo?: string; dueDate?: string; priority?: string; status?: string; linkedBillId?: string; linkedCustomerPhone?: string };
+type InteractionInput = { id?: string; customerName?: string; customerPhone?: string; type?: string; details?: string; assignedTo?: string; nextFollowUp?: string; status?: string; billId?: string };
+type AssignmentInput = { id?: string; billId?: string; billNo?: string; productId?: string; productCode?: string; productName?: string; qty?: number; supplierId?: string; purchaseCost?: number; advancePaid?: number; expectedDate?: string; status?: string; notes?: string };
 
 const SAMPLE_PRODUCTS: ProductInput[] = [
   { code: "SOFA-001", hsnCode: "94016100", name: "3 Seater Fabric Sofa", category: "Sofa", size: "3 Seater", price: 55000, stockQty: 2, mrp: 65000 },
@@ -37,7 +41,7 @@ function cleanList(value: unknown, fallback: string[] = []) {
 
 async function ensureColumn(table: "products" | "bills" | "settings", column: string, definition: string) {
   const info = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
-  if (!info.results.some((item) => item.name === column)) {
+  if (!info.results.some((item: { name: string }) => item.name === column)) {
     await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
   }
 }
@@ -138,7 +142,7 @@ function productUpsertStatement(input: ProductInput) {
 }
 
 async function readState() {
-  const [productRows, billRows, settingRow] = await Promise.all([
+  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows] = await Promise.all([
     env.DB.prepare(`SELECT id,code,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
       stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ORDER BY category,name`).all(),
     env.DB.prepare(`SELECT id,bill_no AS billNo,customer_name AS customerName,customer_phone AS customerPhone,
@@ -151,10 +155,22 @@ async function readState() {
     env.DB.prepare(`SELECT business_name AS businessName,subtitle,gstin,phone,address,gst_rate AS gstRate,
       bill_prefix AS billPrefix,staff_names_json AS staffNamesJson,counter_names_json AS counterNamesJson,
       default_counter AS defaultCounter,invoice_terms AS invoiceTerms,updated_at AS updatedAt FROM settings WHERE id=1`).first(),
+    env.DB.prepare(`SELECT id,name,contact_person AS contactPerson,phone,gstin,address,categories,bank_details AS bankDetails,
+      notes,status,created_at AS createdAt,updated_at AS updatedAt FROM suppliers ORDER BY name`).all(),
+    env.DB.prepare(`SELECT id,category,title,details,assigned_to AS assignedTo,due_date AS dueDate,priority,status,
+      linked_bill_id AS linkedBillId,linked_customer_phone AS linkedCustomerPhone,created_at AS createdAt,
+      updated_at AS updatedAt FROM tasks ORDER BY CASE status WHEN 'Completed' THEN 1 ELSE 0 END,due_date,created_at DESC`).all(),
+    env.DB.prepare(`SELECT id,customer_name AS customerName,customer_phone AS customerPhone,type,details,
+      assigned_to AS assignedTo,next_follow_up AS nextFollowUp,status,bill_id AS billId,created_at AS createdAt,
+      updated_at AS updatedAt FROM customer_interactions ORDER BY CASE status WHEN 'Closed' THEN 1 ELSE 0 END,next_follow_up,created_at DESC`).all(),
+    env.DB.prepare(`SELECT id,bill_id AS billId,bill_no AS billNo,product_id AS productId,product_code AS productCode,
+      product_name AS productName,qty,supplier_id AS supplierId,purchase_cost AS purchaseCost,advance_paid AS advancePaid,
+      expected_date AS expectedDate,status,notes,created_at AS createdAt,updated_at AS updatedAt
+      FROM supplier_assignments ORDER BY CASE status WHEN 'Closed' THEN 1 ELSE 0 END,expected_date,created_at DESC`).all(),
   ]);
-  const products = productRows.results.map((row) => ({ ...row, imageUrl: row.imageKey ? `/api/images/${encodeURIComponent(String(row.imageKey))}` : "" }));
+  const products = productRows.results.map((row: Record<string, unknown>) => ({ ...row, imageUrl: row.imageKey ? `/api/images/${encodeURIComponent(String(row.imageKey))}` : "" }));
   const gstRate = Number((settingRow as Record<string, unknown> | null)?.gstRate ?? 18);
-  const bills = billRows.results.map((row) => {
+  const bills = billRows.results.map((row: Record<string, unknown>) => {
     const record = row as Record<string, unknown>;
     const items = safeJson<Array<Record<string, unknown>>>(record.itemsJson, []);
     const legacyTotals = numeric(record.productTotal) === 0 && numeric(record.grandTotal) > 0;
@@ -187,7 +203,16 @@ async function readState() {
     staffNamesJson: undefined,
     counterNamesJson: undefined,
   } : null;
-  return { products, bills, settings, syncedAt: new Date().toISOString() };
+  return {
+    products,
+    bills,
+    settings,
+    suppliers: supplierRows.results,
+    tasks: taskRows.results,
+    interactions: interactionRows.results,
+    supplierAssignments: assignmentRows.results,
+    syncedAt: new Date().toISOString(),
+  };
 }
 
 export async function GET(request: Request) {
@@ -307,6 +332,104 @@ export async function POST(request: Request) {
       const delivered = Boolean(payload.delivered);
       await env.DB.prepare("UPDATE bills SET delivery_status=?,delivered_at=? WHERE id=? AND status<>'cancelled'")
         .bind(delivered ? "Delivered" : "Pending", delivered ? new Date().toISOString() : "", clean(payload.id)).run();
+    } else if (action === "saveSupplier") {
+      const value = payload.supplier as SupplierInput;
+      if (!clean(value?.name) || !clean(value?.phone)) return Response.json({ error: "Supplier name and phone are required." }, { status: 400 });
+      const id = clean(value.id) || uid("sup");
+      await env.DB.prepare(`INSERT INTO suppliers
+        (id,name,contact_person,phone,gstin,address,categories,bank_details,notes,status,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,contact_person=excluded.contact_person,phone=excluded.phone,
+        gstin=excluded.gstin,address=excluded.address,categories=excluded.categories,bank_details=excluded.bank_details,
+        notes=excluded.notes,status=excluded.status,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, clean(value.name), clean(value.contactPerson), clean(value.phone), clean(value.gstin).toUpperCase(),
+          clean(value.address), clean(value.categories), clean(value.bankDetails), clean(value.notes), clean(value.status, "Active")).run();
+    } else if (action === "deleteSupplier") {
+      const id = clean(payload.id);
+      const used = await env.DB.prepare("SELECT COUNT(*) AS count FROM supplier_assignments WHERE supplier_id=?").bind(id).first<{ count: number }>();
+      if (used?.count) return Response.json({ error: "Supplier has order history. Mark the supplier inactive instead of deleting." }, { status: 400 });
+      await env.DB.prepare("DELETE FROM suppliers WHERE id=?").bind(id).run();
+    } else if (action === "saveTask") {
+      const value = payload.task as TaskInput;
+      if (!clean(value?.title)) return Response.json({ error: "Task title is required." }, { status: 400 });
+      const id = clean(value.id) || uid("task");
+      await env.DB.prepare(`INSERT INTO tasks
+        (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET category=excluded.category,title=excluded.title,details=excluded.details,
+        assigned_to=excluded.assigned_to,due_date=excluded.due_date,priority=excluded.priority,status=excluded.status,
+        linked_bill_id=excluded.linked_bill_id,linked_customer_phone=excluded.linked_customer_phone,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, clean(value.category, "General"), clean(value.title), clean(value.details), clean(value.assignedTo), clean(value.dueDate),
+          clean(value.priority, "Normal"), clean(value.status, "Pending"), clean(value.linkedBillId), clean(value.linkedCustomerPhone)).run();
+    } else if (action === "deleteTask") {
+      await env.DB.prepare("DELETE FROM tasks WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveInteraction") {
+      const value = payload.interaction as InteractionInput;
+      if (!clean(value?.customerName) || !clean(value?.customerPhone)) return Response.json({ error: "Customer name and phone are required." }, { status: 400 });
+      const id = clean(value.id) || uid("crm");
+      await env.DB.prepare(`INSERT INTO customer_interactions
+        (id,customer_name,customer_phone,type,details,assigned_to,next_follow_up,status,bill_id,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET customer_name=excluded.customer_name,customer_phone=excluded.customer_phone,
+        type=excluded.type,details=excluded.details,assigned_to=excluded.assigned_to,next_follow_up=excluded.next_follow_up,
+        status=excluded.status,bill_id=excluded.bill_id,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, clean(value.customerName), clean(value.customerPhone), clean(value.type, "Follow-up"), clean(value.details),
+          clean(value.assignedTo), clean(value.nextFollowUp), clean(value.status, "Open"), clean(value.billId)).run();
+    } else if (action === "deleteInteraction") {
+      await env.DB.prepare("DELETE FROM customer_interactions WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveSupplierAssignments") {
+      const rows = Array.isArray(payload.assignments) ? payload.assignments as AssignmentInput[] : [];
+      const valid = rows.filter((value) => clean(value.billId) && clean(value.productName) && clean(value.supplierId));
+      if (!valid.length) return Response.json({ error: "Select a supplier for at least one product." }, { status: 400 });
+      await env.DB.batch(valid.map((value) => {
+        const id = clean(value.id) || uid("assign");
+        return env.DB.prepare(`INSERT INTO supplier_assignments
+          (id,bill_id,bill_no,product_id,product_code,product_name,qty,supplier_id,purchase_cost,advance_paid,expected_date,status,notes,updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET supplier_id=excluded.supplier_id,purchase_cost=excluded.purchase_cost,
+          advance_paid=excluded.advance_paid,expected_date=excluded.expected_date,status=excluded.status,notes=excluded.notes,
+          updated_at=CURRENT_TIMESTAMP`)
+          .bind(id, clean(value.billId), clean(value.billNo), clean(value.productId), clean(value.productCode), clean(value.productName),
+            Math.max(1, whole(value.qty, 1)), clean(value.supplierId), round2(numeric(value.purchaseCost)), round2(numeric(value.advancePaid)),
+            clean(value.expectedDate), clean(value.status, "Not ordered"), clean(value.notes));
+      }));
+    } else if (action === "deleteSupplierAssignment") {
+      await env.DB.prepare("DELETE FROM supplier_assignments WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "importLegacySnapshot") {
+      const existingBills = await env.DB.prepare("SELECT COUNT(*) AS count FROM bills").first<{ count: number }>();
+      if (existingBills?.count) return Response.json({ error: "Import is only allowed before the first bill is created." }, { status: 409 });
+      const snapshot = payload.snapshot as Record<string, unknown>;
+      const products = Array.isArray(snapshot?.products) ? snapshot.products as ProductInput[] : [];
+      const bills = Array.isArray(snapshot?.bills) ? snapshot.bills as Array<Record<string, unknown>> : [];
+      const importedSettings = snapshot?.settings as Record<string, unknown> | undefined;
+      for (let index = 0; index < products.length; index += 60) await env.DB.batch(products.slice(index, index + 60).map(productUpsertStatement));
+      for (const bill of bills) {
+        const items = Array.isArray(bill.items) ? bill.items : [];
+        const history = Array.isArray(bill.paymentHistory) ? bill.paymentHistory : [];
+        await env.DB.prepare(`INSERT OR IGNORE INTO bills
+          (id,bill_no,client_request_id,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
+          product_total,against_order_extra,subtotal,discount_type,discount_value,discount,taxable_value,cgst,sgst,gst,
+          grand_total,paid_amount,balance_amount,payment_mode,payment_history_json,delivery_date,delivery_status,delivered_at,status,created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .bind(clean(bill.id) || uid("bill"), clean(bill.billNo), clean(bill.clientRequestId), clean(bill.customerName, "Walk-in Customer"),
+            clean(bill.customerPhone), clean(bill.customerAddress), JSON.stringify(items), clean(bill.staffName), clean(bill.counterName),
+            round2(numeric(bill.productTotal)), round2(numeric(bill.againstOrderExtra)), round2(numeric(bill.subtotal)), clean(bill.discountType, "amount"),
+            round2(numeric(bill.discountValue)), round2(numeric(bill.discount)), round2(numeric(bill.taxableValue)), round2(numeric(bill.cgst)),
+            round2(numeric(bill.sgst)), round2(numeric(bill.gst)), round2(numeric(bill.grandTotal)), round2(numeric(bill.paidAmount)),
+            round2(numeric(bill.balanceAmount)), clean(bill.paymentMode, "CASH"), JSON.stringify(history), clean(bill.deliveryDate),
+            clean(bill.deliveryStatus, "Pending"), clean(bill.deliveredAt), clean(bill.status, "confirmed"), clean(bill.createdAt, new Date().toISOString())).run();
+      }
+      if (importedSettings) {
+        const counters = cleanList(importedSettings.counterNames, ["Counter 1"]);
+        await env.DB.prepare(`UPDATE settings SET business_name=?,subtitle=?,gstin=?,phone=?,address=?,gst_rate=?,bill_prefix=?,
+          staff_names_json=?,counter_names_json=?,default_counter=?,invoice_terms=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+          .bind(clean(importedSettings.businessName, "Furniture Expo"), clean(importedSettings.subtitle, "Live Billing Desk"),
+            clean(importedSettings.gstin), clean(importedSettings.phone), clean(importedSettings.address), round2(numeric(importedSettings.gstRate, 18)),
+            clean(importedSettings.billPrefix, "EXP"), JSON.stringify(cleanList(importedSettings.staffNames)), JSON.stringify(counters),
+            clean(importedSettings.defaultCounter, counters[0] || "Counter 1"), clean(importedSettings.invoiceTerms)).run();
+      }
+      const maxBill = bills.reduce((max, bill) => Math.max(max, Number(clean(bill.billNo).match(/(\d+)$/)?.[1] || 0)), 0);
+      await env.DB.prepare("UPDATE counters SET value=? WHERE key='bill'").bind(maxBill).run();
     } else if (action === "saveSettings") {
       const value = payload.settings as Record<string, unknown>;
       const counters = cleanList(value.counterNames, ["Counter 1"]);

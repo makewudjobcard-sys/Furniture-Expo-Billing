@@ -20,6 +20,8 @@ type Page =
   | "products"
   | "bills"
   | "deliveries"
+  | "operations"
+  | "suppliers"
   | "reports"
   | "settings";
 type Product = {
@@ -94,6 +96,27 @@ type Bill = {
   status: string;
   createdAt: string;
 };
+type Supplier = {
+  id: string; name: string; contactPerson: string; phone: string; gstin: string;
+  address: string; categories: string; bankDetails: string; notes: string;
+  status: string; createdAt: string; updatedAt: string;
+};
+type ExpoTask = {
+  id: string; category: string; title: string; details: string; assignedTo: string;
+  dueDate: string; priority: string; status: string; linkedBillId: string;
+  linkedCustomerPhone: string; createdAt: string; updatedAt: string;
+};
+type CustomerInteraction = {
+  id: string; customerName: string; customerPhone: string; type: string;
+  details: string; assignedTo: string; nextFollowUp: string; status: string;
+  billId: string; createdAt: string; updatedAt: string;
+};
+type SupplierAssignment = {
+  id: string; billId: string; billNo: string; productId: string; productCode: string;
+  productName: string; qty: number; supplierId: string; purchaseCost: number;
+  advancePaid: number; expectedDate: string; status: string; notes: string;
+  createdAt: string; updatedAt: string;
+};
 type ExpoSettings = {
   businessName: string;
   subtitle: string;
@@ -111,6 +134,10 @@ type ExpoState = {
   products: Product[];
   bills: Bill[];
   settings: ExpoSettings;
+  suppliers: Supplier[];
+  tasks: ExpoTask[];
+  interactions: CustomerInteraction[];
+  supplierAssignments: SupplierAssignment[];
   syncedAt: string;
 };
 type ReportData = {
@@ -277,6 +304,10 @@ export default function Home() {
     products: [],
     bills: [],
     settings: DEFAULT_SETTINGS,
+    suppliers: [],
+    tasks: [],
+    interactions: [],
+    supplierAssignments: [],
     syncedAt: "",
   });
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -330,6 +361,15 @@ export default function Home() {
     "Point the camera at the product QR code.",
   );
   const [manualScanCode, setManualScanCode] = useState("");
+  const [operationsTab, setOperationsTab] = useState<"tasks" | "customers">("tasks");
+  const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
+  const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
+  const [interactionForm, setInteractionForm] = useState<Partial<CustomerInteraction>>({ type: "Follow-up", status: "Open" });
+  const [showSupplierForm, setShowSupplierForm] = useState(false);
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [showInteractionForm, setShowInteractionForm] = useState(false);
+  const [assignmentBill, setAssignmentBill] = useState<Bill | null>(null);
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Array<Partial<SupplierAssignment>>>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const bulkImagesRef = useRef<HTMLInputElement>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -374,7 +414,7 @@ export default function Home() {
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, syncedAt: "" });
+    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, suppliers: [], tasks: [], interactions: [], supplierAssignments: [], syncedAt: "" });
     setCart([]);
     setAuthStatus("logged_out");
   }
@@ -745,6 +785,24 @@ export default function Home() {
       setPaymentMode("CASH");
       setActive("bills");
       setSelectedBill(created || null);
+      const againstItems = created?.items.filter((item) => item.againstOrder) || [];
+      if (created && againstItems.length) {
+        setAssignmentBill(created);
+        setAssignmentDrafts(againstItems.map((item) => ({
+          billId: created.id,
+          billNo: created.billNo,
+          productId: item.productId,
+          productCode: item.code,
+          productName: item.name,
+          qty: item.qty,
+          supplierId: "",
+          purchaseCost: 0,
+          advancePaid: 0,
+          expectedDate: created.deliveryDate,
+          status: "Not ordered",
+          notes: item.customizeDetails || "",
+        })));
+      }
     }
   }
 
@@ -996,6 +1054,41 @@ export default function Home() {
     );
   }
 
+  async function saveSupplier(event: FormEvent) {
+    event.preventDefault();
+    const data = await mutate({ action: "saveSupplier", supplier: supplierForm }, supplierForm.id ? "Supplier updated." : "Supplier added.");
+    if (data) { setSupplierForm({ status: "Active" }); setShowSupplierForm(false); }
+  }
+  async function saveTask(event: FormEvent) {
+    event.preventDefault();
+    const data = await mutate({ action: "saveTask", task: taskForm }, taskForm.id ? "Task updated." : "Task added to dashboard.");
+    if (data) { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending" }); setShowTaskForm(false); }
+  }
+  async function saveInteraction(event: FormEvent) {
+    event.preventDefault();
+    const data = await mutate({ action: "saveInteraction", interaction: interactionForm }, interactionForm.id ? "Customer activity updated." : "Customer activity added.");
+    if (data) { setInteractionForm({ type: "Follow-up", status: "Open" }); setShowInteractionForm(false); }
+  }
+  async function saveAssignments(event: FormEvent) {
+    event.preventDefault();
+    const data = await mutate({ action: "saveSupplierAssignments", assignments: assignmentDrafts }, "Supplier order assignments saved.");
+    if (data) { setAssignmentBill(null); setAssignmentDrafts([]); setActive("suppliers"); }
+  }
+  function editAssignment(assignment: SupplierAssignment) {
+    const bill = state.bills.find((item) => item.id === assignment.billId) || null;
+    setAssignmentBill(bill);
+    setAssignmentDrafts([{ ...assignment }]);
+  }
+  function openAssignmentForBill(bill: Bill) {
+    const againstItems = bill.items.filter((item) => item.againstOrder);
+    if (!againstItems.length) return notify("This bill has no Against Order items.");
+    setAssignmentBill(bill);
+    setAssignmentDrafts(againstItems.map((item) => {
+      const existing = state.supplierAssignments.find((assignment) => assignment.billId === bill.id && assignment.productId === item.productId);
+      return existing || { billId: bill.id, billNo: bill.billNo, productId: item.productId, productCode: item.code, productName: item.name, qty: item.qty, supplierId: "", purchaseCost: 0, advancePaid: 0, expectedDate: bill.deliveryDate, status: "Not ordered", notes: item.customizeDetails || "" };
+    }));
+  }
+
   function printBill(bill: Bill) {
     const popup = window.open("", "invoice", "width=900,height=900");
     if (!popup) return notify("Allow popups to print the invoice.");
@@ -1109,6 +1202,10 @@ export default function Home() {
         reportTo,
         inRange,
         state.settings.gstRate,
+        state.suppliers,
+        state.tasks,
+        state.interactions,
+        state.supplierAssignments,
       ),
     [
       reportType,
@@ -1118,6 +1215,10 @@ export default function Home() {
       reportTo,
       inRange,
       state.settings.gstRate,
+      state.suppliers,
+      state.tasks,
+      state.interactions,
+      state.supplierAssignments,
     ],
   );
   async function downloadReport() {
@@ -1254,6 +1355,14 @@ export default function Home() {
       (bill) => deliveryBucket(bill) === "delivered",
     ).length,
   };
+  const openTasks = state.tasks.filter((task) => task.status !== "Completed");
+  const dueTasks = openTasks.filter((task) => !task.dueDate || task.dueDate <= isoDate());
+  const openInteractions = state.interactions.filter((item) => item.status !== "Closed");
+  const followUpsDue = openInteractions.filter((item) => item.nextFollowUp && item.nextFollowUp <= isoDate());
+  const openComplaints = openInteractions.filter((item) => item.type === "Complaint");
+  const supplierOrdersOpen = state.supplierAssignments.filter((item) => !["Received", "Closed", "Cancelled"].includes(item.status));
+  const supplierOrdersDelayed = supplierOrdersOpen.filter((item) => item.expectedDate && item.expectedDate < isoDate());
+  const supplierPending = state.supplierAssignments.reduce((sum, item) => sum + Math.max(0, item.purchaseCost - item.advancePaid), 0);
 
   if (authStatus === "checking") {
     return <div className="login-shell"><div className="login-loading"><span>FE</span><strong>Furniture Expo</strong><small>Opening secure billing desk…</small></div></div>;
@@ -1319,6 +1428,8 @@ export default function Home() {
             icon="⇢"
             label="Deliveries"
           />
+          <Nav active={active === "operations"} onClick={() => setActive("operations")} icon="✓" label="Tasks & CRM" />
+          <Nav active={active === "suppliers"} onClick={() => setActive("suppliers")} icon="◇" label="Suppliers" />
           <Nav
             active={active === "reports"}
             onClick={() => setActive("reports")}
@@ -1390,6 +1501,8 @@ export default function Home() {
             icon="⇢"
             label="Delivery"
           />
+          <Nav active={active === "operations"} onClick={() => setActive("operations")} icon="✓" label="Tasks" />
+          <Nav active={active === "suppliers"} onClick={() => setActive("suppliers")} icon="◇" label="Supply" />
           <Nav
             active={active === "reports"}
             onClick={() => setActive("reports")}
@@ -1444,6 +1557,20 @@ export default function Home() {
                 note={`${deliveryCounts.pending} pending / overdue`}
               />
             </div>
+            <article className="action-centre">
+              <div className="card-heading">
+                <div><span className="eyebrow">Today action centre</span><h2>What needs attention</h2></div>
+                <button onClick={() => setActive("operations")}>Manage all →</button>
+              </div>
+              <div className="action-grid">
+                <button onClick={() => { setOperationsTab("tasks"); setActive("operations"); }} className={dueTasks.length ? "attention" : ""}><strong>{dueTasks.length}</strong><span>Tasks due</span><small>Cleaning, marketing, recruitment & finance</small></button>
+                <button onClick={() => { setOperationsTab("customers"); setActive("operations"); }} className={followUpsDue.length ? "attention" : ""}><strong>{followUpsDue.length}</strong><span>Follow-ups due</span><small>Enquiries, orders and service calls</small></button>
+                <button onClick={() => { setOperationsTab("customers"); setActive("operations"); }} className={openComplaints.length ? "danger" : ""}><strong>{openComplaints.length}</strong><span>Open complaints</span><small>Customer issues waiting for closure</small></button>
+                <button onClick={() => setActive("deliveries")} className={deliveryCounts.pending ? "attention" : ""}><strong>{deliveryCounts.pending}</strong><span>Delayed deliveries</span><small>Pending or overdue commitments</small></button>
+                <button onClick={() => setActive("suppliers")} className={supplierOrdersDelayed.length ? "danger" : ""}><strong>{supplierOrdersDelayed.length}</strong><span>Supplier delays</span><small>{money(supplierPending)} purchase balance</small></button>
+                <button onClick={() => setActive("bills")} className={pendingAmount ? "attention" : ""}><strong>{activeBills.filter((bill) => bill.balanceAmount > 0).length}</strong><span>Customer payments</span><small>{money(pendingAmount)} outstanding</small></button>
+              </div>
+            </article>
             <div className="dashboard-grid">
               <article className="dashboard-card">
                 <div className="card-heading">
@@ -2123,6 +2250,10 @@ export default function Home() {
                     "",
                     () => true,
                     state.settings.gstRate,
+                    state.suppliers,
+                    state.tasks,
+                    state.interactions,
+                    state.supplierAssignments,
                   );
                   const XLSX = await import("xlsx");
                   const workbook = XLSX.utils.book_new();
@@ -2310,6 +2441,72 @@ export default function Home() {
           </section>
         )}
 
+        {active === "operations" && (
+          <section className="page-section operations-page">
+            <div className="section-heading with-actions">
+              <div><span className="eyebrow">Daily operations</span><h1>Tasks, customers and commitments.</h1><p>Follow-ups, cleaning, marketing, recruitment, complaints and service work in one place.</p></div>
+              <div className="heading-actions">
+                <button className="secondary-action" onClick={() => { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
+                <button className="primary-small" onClick={() => { setInteractionForm({ type: "Follow-up", status: "Open", nextFollowUp: isoDate() }); setShowInteractionForm(true); }}>＋ Customer activity</button>
+              </div>
+            </div>
+            <div className="metric-grid">
+              <Metric label="Open tasks" value={String(openTasks.length)} note={`${dueTasks.length} due now`} alert={dueTasks.length > 0} />
+              <Metric label="Follow-ups due" value={String(followUpsDue.length)} note="Today / overdue" alert={followUpsDue.length > 0} />
+              <Metric label="Open complaints" value={String(openComplaints.length)} note="Needs closure" alert={openComplaints.length > 0} />
+              <Metric label="Customer records" value={String(new Set(activeBills.map((bill) => normalizePhone(bill.customerPhone)).filter(Boolean)).size)} note="From billing history" />
+            </div>
+            <div className="filter-row operation-tabs">
+              <button className={operationsTab === "tasks" ? "active" : ""} onClick={() => setOperationsTab("tasks")}>Tasks & schedules</button>
+              <button className={operationsTab === "customers" ? "active" : ""} onClick={() => setOperationsTab("customers")}>Customer follow-up & service</button>
+            </div>
+            {operationsTab === "tasks" ? (
+              <div className="table-wrap"><table><thead><tr><th>Task</th><th>Category</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
+                {state.tasks.map((task) => <tr key={task.id} className={task.status !== "Completed" && task.dueDate && task.dueDate < isoDate() ? "overdue-row" : ""}>
+                  <td><strong>{task.title}</strong><small className="block-muted">{task.details || "No details"}</small></td><td>{task.category}</td><td>{task.assignedTo || "—"}</td><td>{task.dueDate || "Not set"}</td><td><span className={`priority ${task.priority.toLowerCase()}`}>{task.priority}</span></td><td>{task.status}</td>
+                  <td><div className="row-actions"><button onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "Reopen" : "Done"}</button><button onClick={() => { setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></div></td>
+                </tr>)}
+                {!state.tasks.length && <tr><td colSpan={7} className="empty-table">No tasks yet. Add your first follow-up or schedule.</td></tr>}
+              </tbody></table></div>
+            ) : (
+              <div className="table-wrap"><table><thead><tr><th>Customer</th><th>Type</th><th>Details</th><th>Assigned</th><th>Next follow-up</th><th>Status</th><th /></tr></thead><tbody>
+                {state.interactions.map((item) => { const priorBills = activeBills.filter((bill) => normalizePhone(bill.customerPhone) === normalizePhone(item.customerPhone)); return <tr key={item.id} className={item.status !== "Closed" && item.nextFollowUp && item.nextFollowUp < isoDate() ? "overdue-row" : ""}>
+                  <td><strong>{item.customerName}</strong><small className="block-muted">{item.customerPhone} · {priorBills.length ? `Existing · ${priorBills.length} bill${priorBills.length > 1 ? "s" : ""}` : "New customer"}</small></td><td><span className={`interaction-type ${item.type.toLowerCase().replace(/\s+/g, "-")}`}>{item.type}</span></td><td>{item.details || "—"}</td><td>{item.assignedTo || "—"}</td><td>{item.nextFollowUp || "Not set"}</td><td>{item.status}</td>
+                  <td><div className="row-actions"><button onClick={() => mutate({ action: "saveInteraction", interaction: { ...item, status: item.status === "Closed" ? "Open" : "Closed" } }, item.status === "Closed" ? "Activity reopened." : "Activity closed.")}>{item.status === "Closed" ? "Reopen" : "Close"}</button><button onClick={() => { setInteractionForm(item); setShowInteractionForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteInteraction", id: item.id }, "Customer activity deleted.")}>Delete</button></div></td>
+                </tr>})}
+                {!state.interactions.length && <tr><td colSpan={7} className="empty-table">No customer follow-ups, enquiries or complaints yet.</td></tr>}
+              </tbody></table></div>
+            )}
+          </section>
+        )}
+
+        {active === "suppliers" && (
+          <section className="page-section suppliers-page">
+            <div className="section-heading with-actions">
+              <div><span className="eyebrow">Supplier control</span><h1>Purchases and supplier promises.</h1><p>Assign Against Order items, track purchase cost, advance, balance and expected arrival.</p></div>
+              <button className="primary-small" onClick={() => { setSupplierForm({ status: "Active" }); setShowSupplierForm(true); }}>＋ Add supplier</button>
+            </div>
+            <div className="metric-grid">
+              <Metric label="Active suppliers" value={String(state.suppliers.filter((supplier) => supplier.status === "Active").length)} note={`${state.suppliers.length} total`} />
+              <Metric label="Open purchase orders" value={String(supplierOrdersOpen.length)} note="Not received / closed" />
+              <Metric label="Supplier delays" value={String(supplierOrdersDelayed.length)} note="Past expected date" alert={supplierOrdersDelayed.length > 0} />
+              <Metric label="Supplier balance" value={money(supplierPending)} note="Purchase cost minus advance" alert={supplierPending > 0} />
+            </div>
+            <article className="dashboard-card wide-card"><div className="card-heading"><div><span className="eyebrow">Supplier master</span><h2>Contacts and categories</h2></div></div>
+              <div className="table-wrap"><table><thead><tr><th>Supplier</th><th>Phone</th><th>GSTIN</th><th>Categories</th><th>Status</th><th /></tr></thead><tbody>
+                {state.suppliers.map((supplier) => <tr key={supplier.id}><td><strong>{supplier.name}</strong><small className="block-muted">{supplier.contactPerson || supplier.address || "—"}</small></td><td>{supplier.phone}</td><td>{supplier.gstin || "—"}</td><td>{supplier.categories || "All / not specified"}</td><td>{supplier.status}</td><td><div className="row-actions"><button onClick={() => { setSupplierForm(supplier); setShowSupplierForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteSupplier", id: supplier.id }, "Supplier deleted.")}>Delete</button></div></td></tr>)}
+                {!state.suppliers.length && <tr><td colSpan={6} className="empty-table">Add suppliers before assigning Against Order products.</td></tr>}
+              </tbody></table></div>
+            </article>
+            <article className="dashboard-card wide-card"><div className="card-heading"><div><span className="eyebrow">Supplier assignments</span><h2>Purchase order tracker</h2></div></div>
+              <div className="table-wrap"><table><thead><tr><th>Bill / Product</th><th>Supplier</th><th>Cost</th><th>Advance</th><th>Balance</th><th>Expected</th><th>Status</th><th /></tr></thead><tbody>
+                {state.supplierAssignments.map((assignment) => { const supplier = state.suppliers.find((item) => item.id === assignment.supplierId); return <tr key={assignment.id} className={assignment.expectedDate && assignment.expectedDate < isoDate() && !["Received", "Closed", "Cancelled"].includes(assignment.status) ? "overdue-row" : ""}><td><strong>{assignment.billNo} · {assignment.productName}</strong><small className="block-muted">{assignment.productCode} · Qty {assignment.qty}</small></td><td>{supplier?.name || "Unknown supplier"}</td><td>{money(assignment.purchaseCost)}</td><td>{money(assignment.advancePaid)}</td><td>{money(Math.max(0, assignment.purchaseCost - assignment.advancePaid))}</td><td>{assignment.expectedDate || "Not set"}</td><td>{assignment.status}</td><td><div className="row-actions"><button onClick={() => editAssignment(assignment)}>Update</button><button className="danger-link" onClick={() => mutate({ action: "deleteSupplierAssignment", id: assignment.id }, "Supplier assignment deleted.")}>Delete</button></div></td></tr>})}
+                {!state.supplierAssignments.length && <tr><td colSpan={8} className="empty-table">Supplier assignments will appear here after an Against Order bill.</td></tr>}
+              </tbody></table></div>
+            </article>
+          </section>
+        )}
+
         {active === "reports" && (
           <section className="page-section reports-page">
             <div className="section-heading with-actions">
@@ -2387,6 +2584,10 @@ export default function Home() {
                 ["stock", "Stock"],
                 ["staff", "Staff / Counter"],
                 ["against", "Against Order"],
+                ["supplier", "Suppliers"],
+                ["tasks", "Tasks"],
+                ["followup", "Customer Follow-up"],
+                ["complaints", "Complaints / Service"],
                 ["gst", "GST"],
               ].map(([key, label]) => (
                 <button
@@ -3028,6 +3229,11 @@ export default function Home() {
                 WhatsApp
               </button>
               {selectedBill.status !== "cancelled" && (
+                <button className="secondary-action" onClick={() => openAssignmentForBill(selectedBill)}>
+                  Assign supplier
+                </button>
+              )}
+              {selectedBill.status !== "cancelled" && (
                 <button
                   className="secondary-action"
                   onClick={() => setEditingBill({ ...selectedBill })}
@@ -3184,6 +3390,73 @@ export default function Home() {
         </div>
       )}
 
+      {showSupplierForm && (
+        <div className="modal-backdrop"><form className="modal-card" onSubmit={saveSupplier}>
+          <div className="modal-head"><div><span className="eyebrow">Supplier master</span><h2>{supplierForm.id ? "Edit supplier" : "Add supplier"}</h2></div><button type="button" onClick={() => setShowSupplierForm(false)}>×</button></div>
+          <div className="form-grid">
+            <label>Supplier name<input value={supplierForm.name || ""} onChange={(event) => setSupplierForm({ ...supplierForm, name: event.target.value })} required /></label>
+            <label>Phone<input value={supplierForm.phone || ""} onChange={(event) => setSupplierForm({ ...supplierForm, phone: event.target.value })} required /></label>
+            <label>Contact person<input value={supplierForm.contactPerson || ""} onChange={(event) => setSupplierForm({ ...supplierForm, contactPerson: event.target.value })} /></label>
+            <label>GSTIN<input value={supplierForm.gstin || ""} onChange={(event) => setSupplierForm({ ...supplierForm, gstin: event.target.value.toUpperCase() })} /></label>
+            <label className="wide">Address<textarea rows={2} value={supplierForm.address || ""} onChange={(event) => setSupplierForm({ ...supplierForm, address: event.target.value })} /></label>
+            <label className="wide">Product categories<input value={supplierForm.categories || ""} onChange={(event) => setSupplierForm({ ...supplierForm, categories: event.target.value })} placeholder="Sofa, Cot, Dining Table…" /></label>
+            <label className="wide">Bank / payment details<textarea rows={2} value={supplierForm.bankDetails || ""} onChange={(event) => setSupplierForm({ ...supplierForm, bankDetails: event.target.value })} /></label>
+            <label>Status<select value={supplierForm.status || "Active"} onChange={(event) => setSupplierForm({ ...supplierForm, status: event.target.value })}><option>Active</option><option>Inactive</option></select></label>
+            <label className="wide">Notes<textarea rows={2} value={supplierForm.notes || ""} onChange={(event) => setSupplierForm({ ...supplierForm, notes: event.target.value })} /></label>
+          </div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowSupplierForm(false)}>Cancel</button><button className="primary-small">Save supplier</button></div>
+        </form></div>
+      )}
+
+      {showTaskForm && (
+        <div className="modal-backdrop"><form className="modal-card" onSubmit={saveTask}>
+          <div className="modal-head"><div><span className="eyebrow">Task & schedule</span><h2>{taskForm.id ? "Edit task" : "Add task"}</h2></div><button type="button" onClick={() => setShowTaskForm(false)}>×</button></div>
+          <div className="form-grid">
+            <label>Category<select value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Recruitment", "Financial", "Delivery", "General"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Priority<select value={taskForm.priority || "Normal"} onChange={(event) => setTaskForm({ ...taskForm, priority: event.target.value })}><option>Low</option><option>Normal</option><option>High</option><option>Urgent</option></select></label>
+            <label className="wide">Task title<input value={taskForm.title || ""} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} required /></label>
+            <label className="wide">Details<textarea rows={3} value={taskForm.details || ""} onChange={(event) => setTaskForm({ ...taskForm, details: event.target.value })} /></label>
+            <label>Assigned staff<input list="task-staff" value={taskForm.assignedTo || ""} onChange={(event) => setTaskForm({ ...taskForm, assignedTo: event.target.value })} /><datalist id="task-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label>Due date<input type="date" value={taskForm.dueDate || ""} onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })} /></label>
+            <label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Completed</option></select></label>
+            <label>Customer phone<input value={taskForm.linkedCustomerPhone || ""} onChange={(event) => setTaskForm({ ...taskForm, linkedCustomerPhone: event.target.value })} /></label>
+          </div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowTaskForm(false)}>Cancel</button><button className="primary-small">Save task</button></div>
+        </form></div>
+      )}
+
+      {showInteractionForm && (
+        <div className="modal-backdrop"><form className="modal-card" onSubmit={saveInteraction}>
+          <div className="modal-head"><div><span className="eyebrow">Customer CRM</span><h2>{interactionForm.id ? "Edit activity" : "Add customer activity"}</h2></div><button type="button" onClick={() => setShowInteractionForm(false)}>×</button></div>
+          <div className="form-grid">
+            <label>Customer name<input value={interactionForm.customerName || ""} onChange={(event) => setInteractionForm({ ...interactionForm, customerName: event.target.value })} required /></label>
+            <label>Phone<input value={interactionForm.customerPhone || ""} onChange={(event) => { const phone = event.target.value; const prior = activeBills.find((bill) => normalizePhone(bill.customerPhone) === normalizePhone(phone)); setInteractionForm({ ...interactionForm, customerPhone: phone, customerName: interactionForm.customerName || prior?.customerName || "", billId: interactionForm.billId || prior?.id || "" }); }} required /></label>
+            <label>Activity type<select value={interactionForm.type || "Follow-up"} onChange={(event) => setInteractionForm({ ...interactionForm, type: event.target.value })}>{["Enquiry", "Follow-up", "Order Follow-up", "Complaint", "Service Call"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Next follow-up<input type="date" value={interactionForm.nextFollowUp || ""} onChange={(event) => setInteractionForm({ ...interactionForm, nextFollowUp: event.target.value })} /></label>
+            <label>Assigned staff<input list="crm-staff" value={interactionForm.assignedTo || ""} onChange={(event) => setInteractionForm({ ...interactionForm, assignedTo: event.target.value })} /><datalist id="crm-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label>Status<select value={interactionForm.status || "Open"} onChange={(event) => setInteractionForm({ ...interactionForm, status: event.target.value })}><option>Open</option><option>In progress</option><option>Closed</option></select></label>
+            <label className="wide">Details / resolution<textarea rows={4} value={interactionForm.details || ""} onChange={(event) => setInteractionForm({ ...interactionForm, details: event.target.value })} required /></label>
+          </div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowInteractionForm(false)}>Cancel</button><button className="primary-small">Save activity</button></div>
+        </form></div>
+      )}
+
+      {assignmentBill && (
+        <div className="modal-backdrop"><form className="modal-card assignment-modal" onSubmit={saveAssignments}>
+          <div className="modal-head"><div><span className="eyebrow">Supplier assignment</span><h2>{assignmentBill.billNo}</h2><small>{assignmentBill.customerName} · Against Order products</small></div><button type="button" onClick={() => { setAssignmentBill(null); setAssignmentDrafts([]); }}>×</button></div>
+          {!state.suppliers.some((supplier) => supplier.status === "Active") && <div className="form-notice">Add an active supplier first. You can close this window and use the Suppliers tab.</div>}
+          <div className="assignment-list">{assignmentDrafts.map((draft, index) => <fieldset key={`${draft.productId}-${index}`}><legend>{draft.productName} · {draft.productCode} · Qty {draft.qty}</legend><div className="form-grid">
+            <label>Supplier<select value={draft.supplierId || ""} onChange={(event) => setAssignmentDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, supplierId: event.target.value } : row))} required><option value="">Select supplier</option>{state.suppliers.filter((supplier) => supplier.status === "Active" || supplier.id === draft.supplierId).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
+            <label>Status<select value={draft.status || "Not ordered"} onChange={(event) => setAssignmentDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, status: event.target.value } : row))}>{["Not ordered", "Ordered", "Confirmed", "Ready", "Received", "Closed", "Cancelled"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Purchase cost<input type="number" min="0" value={draft.purchaseCost || ""} onChange={(event) => setAssignmentDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, purchaseCost: Number(event.target.value) } : row))} /></label>
+            <label>Advance paid<input type="number" min="0" value={draft.advancePaid || ""} onChange={(event) => setAssignmentDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, advancePaid: Number(event.target.value) } : row))} /></label>
+            <label>Expected arrival<input type="date" value={draft.expectedDate || ""} onChange={(event) => setAssignmentDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, expectedDate: event.target.value } : row))} /></label>
+            <label className="wide">Notes<input value={draft.notes || ""} onChange={(event) => setAssignmentDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, notes: event.target.value } : row))} /></label>
+          </div></fieldset>)}</div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => { setAssignmentBill(null); setAssignmentDrafts([]); }}>Save later</button><button className="primary-small" disabled={!state.suppliers.some((supplier) => supplier.status === "Active")}>Save assignments</button></div>
+        </form></div>
+      )}
+
       {qrProduct && (
         <div className="modal-backdrop">
           <div className="modal-card qr-modal">
@@ -3304,7 +3577,7 @@ function ProductThumb({
 
 function formatReportCell(header: string, value: string | number) {
   return typeof value === "number" &&
-    /sales|paid|balance|price|value|cgst|sgst|gst|extra|total|amount|cash|upi|card|discount/i.test(
+    /sales|paid|balance|price|cost|advance|value|cgst|sgst|gst|extra|total|amount|cash|upi|card|discount/i.test(
       header,
     )
     ? money(value)
@@ -3319,6 +3592,10 @@ function buildReport(
   to: string,
   inRange: (bill: Bill, delivery?: boolean) => boolean,
   gstRate: number,
+  suppliers: Supplier[],
+  tasks: ExpoTask[],
+  interactions: CustomerInteraction[],
+  assignments: SupplierAssignment[],
 ): ReportData {
   const dateLabel =
     !from && !to ? "All time" : `${from || "Beginning"} to ${to || "Today"}`;
@@ -3718,6 +3995,40 @@ function buildReport(
         bill.gst,
         bill.grandTotal,
       ]),
+    };
+  }
+  if (type === "supplier") {
+    const rows = assignments.filter((item) => (!from || item.createdAt.slice(0, 10) >= from) && (!to || item.createdAt.slice(0, 10) <= to));
+    return {
+      title: "Supplier Purchase Report",
+      subtitle: dateLabel,
+      summary: [
+        ["Suppliers", String(suppliers.length)],
+        ["Assignments", String(rows.length)],
+        ["Purchase Cost", money(rows.reduce((sum, item) => sum + item.purchaseCost, 0))],
+        ["Supplier Balance", money(rows.reduce((sum, item) => sum + Math.max(0, item.purchaseCost - item.advancePaid), 0))],
+      ],
+      headers: ["Bill No", "Product", "Qty", "Supplier", "Purchase Cost", "Advance", "Balance", "Expected", "Status", "Notes"],
+      rows: rows.map((item) => [item.billNo, `${item.productCode} · ${item.productName}`, item.qty, suppliers.find((supplier) => supplier.id === item.supplierId)?.name || "Unknown", item.purchaseCost, item.advancePaid, Math.max(0, item.purchaseCost - item.advancePaid), item.expectedDate, item.status, item.notes]),
+    };
+  }
+  if (type === "tasks") {
+    const rows = tasks.filter((item) => (!from || (item.dueDate || item.createdAt.slice(0, 10)) >= from) && (!to || (item.dueDate || item.createdAt.slice(0, 10)) <= to));
+    return {
+      title: "Tasks & Commitments Report", subtitle: dateLabel,
+      summary: [["Tasks", String(rows.length)], ["Pending", String(rows.filter((item) => item.status === "Pending").length)], ["In Progress", String(rows.filter((item) => item.status === "In progress").length)], ["Completed", String(rows.filter((item) => item.status === "Completed").length)]],
+      headers: ["Category", "Task", "Details", "Assigned", "Due Date", "Priority", "Status", "Customer Phone"],
+      rows: rows.map((item) => [item.category, item.title, item.details, item.assignedTo, item.dueDate, item.priority, item.status, item.linkedCustomerPhone]),
+    };
+  }
+  if (type === "followup" || type === "complaints") {
+    const accepted = type === "complaints" ? ["Complaint", "Service Call"] : ["Enquiry", "Follow-up", "Order Follow-up"];
+    const rows = interactions.filter((item) => accepted.includes(item.type) && (!from || (item.nextFollowUp || item.createdAt.slice(0, 10)) >= from) && (!to || (item.nextFollowUp || item.createdAt.slice(0, 10)) <= to));
+    return {
+      title: type === "complaints" ? "Complaints & Service Report" : "Customer Follow-up Report", subtitle: dateLabel,
+      summary: [["Records", String(rows.length)], ["Open", String(rows.filter((item) => item.status !== "Closed").length)], ["Closed", String(rows.filter((item) => item.status === "Closed").length)], ["Due / Overdue", String(rows.filter((item) => item.status !== "Closed" && item.nextFollowUp && item.nextFollowUp <= isoDate()).length)]],
+      headers: ["Customer", "Phone", "Type", "Details / Resolution", "Assigned", "Next Follow-up", "Status"],
+      rows: rows.map((item) => [item.customerName, item.customerPhone, item.type, item.details, item.assignedTo, item.nextFollowUp, item.status]),
     };
   }
   const collections = selected.flatMap((bill) => bill.paymentHistory);
