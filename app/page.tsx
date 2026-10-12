@@ -170,6 +170,7 @@ type DashboardAction = {
   perform?: () => void | Promise<unknown>;
 };
 type ThemeName = "teak" | "forest" | "light" | "midnight" | "ocean" | "rose";
+type DensityName = "comfortable" | "compact";
 
 const EMPTY_PRODUCT = {
   id: "",
@@ -421,6 +422,8 @@ export default function Home() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeName>("forest");
   const [billingStep, setBillingStep] = useState<1 | 2 | 3>(1);
+  const [density, setDensity] = useState<DensityName>("comfortable");
+  const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
   const [restoredOffline, setRestoredOffline] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
@@ -447,9 +450,13 @@ export default function Home() {
   useEffect(() => {
     const saved = window.localStorage.getItem("smaarthome-theme") as ThemeName | null;
     const next = themes.some((item) => item.id === saved) ? saved! : "teak";
+    const savedDensity = window.localStorage.getItem("smaarthome-density") as DensityName | null;
+    const nextDensity = savedDensity === "compact" ? "compact" : "comfortable";
     const frame = window.requestAnimationFrame(() => {
       setTheme(next);
+      setDensity(nextDensity);
       document.documentElement.dataset.theme = next;
+      document.documentElement.dataset.density = nextDensity;
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -458,6 +465,12 @@ export default function Home() {
     setTheme(next);
     document.documentElement.dataset.theme = next;
     window.localStorage.setItem("smaarthome-theme", next);
+  }
+
+  function changeDensity(next: DensityName) {
+    setDensity(next);
+    document.documentElement.dataset.density = next;
+    window.localStorage.setItem("smaarthome-density", next);
   }
 
   useEffect(() => {
@@ -575,7 +588,7 @@ export default function Home() {
         discountType?: "amount" | "percent"; discountValue?: number; paidAmount?: number;
         paymentMode?: string; cardCharge?: number; transportCharge?: number; otherCharge?: number;
       };
-      if (draft.cart?.length) {
+      if (draft.cart?.length || draft.customer?.name || draft.customer?.phone || draft.customer?.deliveryDate) {
         window.setTimeout(() => {
           setCart(draft.cart || []);
           setCustomer((current) => ({ ...current, ...draft.customer }));
@@ -597,7 +610,8 @@ export default function Home() {
 
   useEffect(() => {
     if (authStatus !== "logged_in" || !draftLoadedRef.current) return;
-    if (!cart.length) {
+    const hasDraft = cart.length > 0 || Boolean(customer.name || customer.phone || customer.address || customer.deliveryDate || customer.orderNotes);
+    if (!hasDraft) {
       window.localStorage.removeItem("smaarthome-order-draft");
       return;
     }
@@ -970,13 +984,14 @@ export default function Home() {
 
   function continueBilling() {
     if (billingStep === 1) {
-      if (!cart.length) return notify("Add at least one product to continue.");
+      if (!customer.name.trim() || !customer.phone.trim())
+        return notify("Enter customer name and mobile number to continue.");
+      if (!customer.deliveryDate) return notify("Choose the expected delivery date.");
       setBillingStep(2);
       return;
     }
-    if (!customer.name.trim() || !customer.phone.trim())
-      return notify("Enter customer name and mobile number to continue.");
-    if (!customer.deliveryDate) return notify("Choose the expected delivery date.");
+    if (!cart.length) return notify("Add at least one product to continue.");
+    setMobileSummaryOpen(false);
     setBillingStep(3);
   }
 
@@ -1704,6 +1719,7 @@ export default function Home() {
           </details>
         </nav>
         <label className="sidebar-theme">Theme<select value={theme} onChange={(event) => changeTheme(event.target.value as ThemeName)}>{themes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+        <label className="sidebar-theme sidebar-density">Display<select value={density} onChange={(event) => changeDensity(event.target.value as DensityName)}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
         <div className={`sync-card ${online ? "online" : "offline"}`}>
           <span className="sync-dot" />
           <div>
@@ -1771,6 +1787,7 @@ export default function Home() {
               ["settings", "⚙", "Settings", "Business, GST and staff setup"],
             ] as const).map(([page, icon, label, note]) => <button key={page} onClick={() => { setActive(page); setMobileMoreOpen(false); }}><span>{icon}</span><div><strong>{label}</strong><small>{note}</small></div><b>›</b></button>)}
             <div className="mobile-theme-picker"><strong>Colour theme</strong><div>{themes.map((item) => <button className={theme === item.id ? "active" : ""} key={item.id} onClick={() => changeTheme(item.id)}><span>{item.colors.map((color) => <i key={color} style={{ background: color }} />)}</span>{item.label}</button>)}</div></div>
+            <div className="mobile-density-picker"><strong>Display spacing</strong><div><button className={density === "comfortable" ? "active" : ""} onClick={() => changeDensity("comfortable")}>Comfortable</button><button className={density === "compact" ? "active" : ""} onClick={() => changeDensity("compact")}>Compact</button></div></div>
           </div>
         </div>}
 
@@ -1944,12 +1961,12 @@ export default function Home() {
         {active === "billing" && (
           <section className={`billing-layout wizard-step-${billingStep}`}>
             <div className="billing-progress" aria-label="Billing progress">
-              {([1, 2, 3] as const).map((step) => <button key={step} className={billingStep === step ? "active" : billingStep > step ? "done" : ""} onClick={() => step < billingStep && setBillingStep(step)} disabled={step > billingStep}>
-                <span>{billingStep > step ? "✓" : step}</span><div><strong>{step === 1 ? "Products" : step === 2 ? "Customer & delivery" : "Payment & confirm"}</strong><small>{step === 1 ? "Choose items" : step === 2 ? "Promise details" : "Review total"}</small></div>
+              {([1, 2, 3] as const).map((step) => <button key={step} className={billingStep === step ? "active" : billingStep > step ? "done" : ""} onClick={() => { if (step < billingStep) { setMobileSummaryOpen(false); setBillingStep(step); } }} disabled={step > billingStep}>
+                <span>{billingStep > step ? "✓" : step}</span><div><strong>{step === 1 ? "Customer" : step === 2 ? "Products" : "Payment"}</strong><small>{step === 1 ? "Name & delivery" : step === 2 ? "Choose items" : "Review & save"}</small></div>
               </button>)}
               <p>{cart.reduce((sum, item) => sum + item.qty, 0)} items · {money(grandTotal)} <em>{online ? "Draft auto-saved" : "Offline draft safe"}</em></p>
             </div>
-            <div className={`catalog-panel ${billingStep !== 1 ? "wizard-hidden" : ""}`}>
+            <div className={`catalog-panel ${billingStep !== 2 ? "wizard-hidden" : ""}`}>
               <div className="section-heading">
                 <div>
                   <span className="eyebrow">Showroom order desk</span>
@@ -2026,17 +2043,19 @@ export default function Home() {
                 ))}
               </div>
             </div>
-            <aside className={`cart-panel wizard-cart step-${billingStep}`}>
+            {billingStep === 2 && <><button className="mobile-bill-bar" onClick={() => setMobileSummaryOpen(true)}><span><b>{cart.reduce((sum, item) => sum + item.qty, 0)}</b> Bill summary</span><strong>{money(grandTotal)}</strong><em>View bill ↑</em></button>{mobileSummaryOpen && <button className="mobile-summary-backdrop" aria-label="Close bill summary" onClick={() => setMobileSummaryOpen(false)} />}</>}
+            <aside className={`cart-panel wizard-cart step-${billingStep} ${mobileSummaryOpen ? "mobile-open" : ""}`}>
               <div className="cart-title">
                 <div>
                   <span className="eyebrow">Step {billingStep} of 3</span>
-                  <h2>{billingStep === 1 ? "Selected products" : billingStep === 2 ? "Customer & delivery" : "Payment & confirm"}</h2>
+                  <h2>{billingStep === 1 ? "Customer & delivery" : billingStep === 2 ? "Bill summary" : "Payment & confirm"}</h2>
                 </div>
                 <span className="count-badge">
                   {cart.reduce((sum, item) => sum + item.qty, 0)}
                 </span>
+                {billingStep === 2 && <button className="mobile-summary-close" onClick={() => setMobileSummaryOpen(false)} aria-label="Close bill summary">×</button>}
               </div>
-              <div className={`cart-items ${billingStep !== 1 ? "wizard-hidden" : ""}`}>
+              <div className={`cart-items ${billingStep !== 2 ? "wizard-hidden" : ""}`}>
                 {cart.map((item, index) => (
                   <div
                     className="cart-item expanded"
@@ -2145,9 +2164,9 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              {billingStep === 1 && <div className="wizard-actions single"><button className="primary-action" disabled={!cart.length} onClick={continueBilling}>Continue to customer <span>→</span></button></div>}
+              {billingStep === 2 && <div className="wizard-actions single"><button className="primary-action" disabled={!cart.length} onClick={continueBilling}>Continue to payment <span>→</span></button></div>}
               <div className="cart-scroll-area">
-              <div className={`customer-fields ${billingStep !== 2 ? "wizard-hidden" : ""}`}>
+              <div className={`customer-fields ${billingStep !== 1 ? "wizard-hidden" : ""}`}>
                 <div className="field-pair">
                   <label>
                     Customer name
@@ -2185,45 +2204,18 @@ export default function Home() {
                     placeholder="Optional"
                   />
                 </label>
-                <div className="field-pair">
-                  <label>
-                    Order booking staff
-                    <input
-                      list="staff-list"
-                      value={customer.staffName}
-                      onChange={(event) =>
-                        setCustomer({
-                          ...customer,
-                          staffName: event.target.value,
-                        })
-                      }
-                    />
-                    <datalist id="staff-list">
-                      {state.settings.staffNames.map((item) => (
-                        <option value={item} key={item} />
-                      ))}
-                    </datalist>
-                  </label>
-                  <label>
-                    Accountant
-                    <input
-                      list="staff-list"
-                      value={customer.accountantName}
-                      onChange={(event) =>
-                        setCustomer({
-                          ...customer,
-                          accountantName: event.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="field-pair">
-                  <label>Manager<input list="staff-list" value={customer.managerName} onChange={(event) => setCustomer({ ...customer, managerName: event.target.value })} /></label>
-                  <label>Expected delivery<input type="date" value={customer.deliveryDate} onChange={(event) => setCustomer({ ...customer, deliveryDate: event.target.value })} required /></label>
-                </div>
-                <label>Order notes<textarea rows={2} value={customer.orderNotes} onChange={(event) => setCustomer({ ...customer, orderNotes: event.target.value })} placeholder="Transport extra, customization, advance terms…" /></label>
-                <div className="wizard-actions"><button className="secondary-action" onClick={() => setBillingStep(1)}>← Back to products</button><button className="primary-action" onClick={continueBilling}>Continue to payment <span>→</span></button></div>
+                <label>Expected delivery<input type="date" value={customer.deliveryDate} onChange={(event) => setCustomer({ ...customer, deliveryDate: event.target.value })} required /></label>
+                <details className="more-details">
+                  <summary><span><b>More details</b><small>Staff, accountant, manager and notes</small></span><em>＋</em></summary>
+                  <div className="more-details-body">
+                    <div className="field-pair">
+                      <label>Order booking staff<input list="staff-list" value={customer.staffName} onChange={(event) => setCustomer({ ...customer, staffName: event.target.value })} /><datalist id="staff-list">{state.settings.staffNames.map((item) => <option value={item} key={item} />)}</datalist></label>
+                      <label>Accountant<input list="staff-list" value={customer.accountantName} onChange={(event) => setCustomer({ ...customer, accountantName: event.target.value })} /></label>
+                    </div>
+                    <div className="field-pair"><label>Manager<input list="staff-list" value={customer.managerName} onChange={(event) => setCustomer({ ...customer, managerName: event.target.value })} /></label><label>Order notes<textarea rows={3} value={customer.orderNotes} onChange={(event) => setCustomer({ ...customer, orderNotes: event.target.value })} placeholder="Transport, customization or advance terms…" /></label></div>
+                  </div>
+                </details>
+                <div className="wizard-actions single"><button className="primary-action" onClick={continueBilling}>Continue to products <span>→</span></button></div>
               </div>
               <div className={`checkout-step ${billingStep !== 3 ? "wizard-hidden" : ""}`}>
               <div className="totals detailed">
@@ -2963,6 +2955,10 @@ export default function Home() {
               <div className="form-section theme-section">
                 <div><strong>App appearance</strong><p>Choose a comfortable colour theme. This selection stays on this device.</p></div>
                 <div className="theme-grid">{themes.map((item) => <button type="button" className={theme === item.id ? "active" : ""} key={item.id} onClick={() => changeTheme(item.id)}><span>{item.colors.map((color) => <i key={color} style={{ background: color }} />)}</span><strong>{item.label}</strong>{theme === item.id && <em>Selected</em>}</button>)}</div>
+              </div>
+              <div className="form-section density-section">
+                <div><strong>Display spacing</strong><p>Comfortable gives maximum breathing room. Compact shows more rows when needed.</p></div>
+                <div className="density-picker"><button type="button" className={density === "comfortable" ? "active" : ""} onClick={() => changeDensity("comfortable")}><span>Comfortable</span><small>Large gaps · 48px controls · easiest to read</small></button><button type="button" className={density === "compact" ? "active" : ""} onClick={() => changeDensity("compact")}><span>Compact</span><small>More information · still touch friendly</small></button></div>
               </div>
               <div className="form-section safety-section">
                 <div><strong>Backup & offline safety</strong><p>Download a complete JSON copy. The latest synced data and unfinished order draft also stay available on this device.</p></div>
