@@ -249,6 +249,9 @@ export async function POST(request: Request) {
         env.DB.prepare("DELETE FROM supplier_assignments"),
         env.DB.prepare("DELETE FROM customer_interactions"),
         env.DB.prepare("DELETE FROM tasks"),
+        // Cancelling first lets the stock restoration trigger reverse every
+        // ready-stock sample sale before its historical row is removed.
+        env.DB.prepare("UPDATE bills SET status='cancelled' WHERE status<>'cancelled'"),
         env.DB.prepare("DELETE FROM bills"),
         env.DB.prepare("UPDATE counters SET value=0 WHERE key='bill'"),
       ]);
