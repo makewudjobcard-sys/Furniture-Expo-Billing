@@ -3134,7 +3134,7 @@ export default function Home() {
                 <div key={`${item.code}-${index}`}>
                   {(() => {
                     const product = state.products.find((entry) => entry.id === item.productId || entry.code === item.code);
-                    return product ? <TableThumb product={product} /> : null;
+                    return product ? <ProductThumb product={product} /> : null;
                   })()}
                   <div>
                     <strong>{item.name}</strong>

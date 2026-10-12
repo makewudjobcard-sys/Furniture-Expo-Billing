@@ -462,7 +462,7 @@ export async function POST(request: Request) {
       const importedSettings = snapshot?.settings as Record<string, unknown> | undefined;
       const snapshotBillKeys = new Set(bills.flatMap((bill) => [clean(bill.id), clean(bill.billNo)]).filter(Boolean));
       const existingBillRows = await env.DB.prepare("SELECT id,bill_no AS billNo FROM bills").all<{ id: string; billNo: string }>();
-      if (existingBillRows.results.some((bill) => !snapshotBillKeys.has(bill.id) && !snapshotBillKeys.has(bill.billNo))) {
+      if (existingBillRows.results.some((bill: { id: string; billNo: string }) => !snapshotBillKeys.has(bill.id) && !snapshotBillKeys.has(bill.billNo))) {
         return Response.json({ error: "Import is only allowed before new bills are created in this app." }, { status: 409 });
       }
       for (let index = 0; index < products.length; index += 60) await env.DB.batch(products.slice(index, index + 60).map(productUpsertStatement));
