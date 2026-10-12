@@ -1,5 +1,3 @@
-import { env } from "cloudflare:workers";
-
 const COOKIE_NAME = "fe_session";
 const SESSION_SECONDS = 12 * 60 * 60;
 
@@ -10,7 +8,7 @@ type AuthEnv = {
 };
 
 function config() {
-  const values = env as unknown as AuthEnv;
+  const values = process.env as AuthEnv;
   const username = values.APP_USERNAME?.trim() || "";
   const password = values.APP_PASSWORD || "";
   const secret = values.APP_SESSION_SECRET || "";

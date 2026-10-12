@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "../../../lib/runtime";
 import { isAuthenticated, unauthorized } from "../../../lib/auth";
 
 export async function GET(request: Request, context: { params: Promise<{ key: string }> }) {

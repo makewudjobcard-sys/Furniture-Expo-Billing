@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env } from "../../lib/runtime";
 import { isAuthenticated, unauthorized } from "../../lib/auth";
 
 type ProductInput = {
@@ -49,6 +49,14 @@ async function ensureColumn(table: "products" | "bills" | "settings", column: st
 
 async function ensureSchema() {
   const db = env.DB;
+  if (db.dialect === "postgres") {
+    await db.ensureSchema();
+    await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Furniture Expo','Live Billing Desk',18,'EXP')`).run();
+    await db.prepare("INSERT OR IGNORE INTO counters (key,value) VALUES ('bill',0)").run();
+    const count = await db.prepare("SELECT COUNT(*) AS count FROM products").first<{ count: number }>();
+    if (!Number(count?.count || 0)) await db.batch(SAMPLE_PRODUCTS.map(productUpsertStatement));
+    return;
+  }
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS products (
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, hsn_code TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
