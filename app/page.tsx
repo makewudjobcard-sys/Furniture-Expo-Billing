@@ -3763,7 +3763,7 @@ function ProductThumb({
 
 function formatReportCell(header: string, value: string | number) {
   return typeof value === "number" &&
-    /sales|paid|balance|price|cost|advance|value|cgst|sgst|gst|extra|total|amount|cash|upi|card|discount/i.test(
+    /sales|paid|collected|balance|price|cost|advance|value|cgst|sgst|gst|extra|total|amount|cash|gpay|upi|card|discount|average/i.test(
       header,
     )
     ? money(value)
