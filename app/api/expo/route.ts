@@ -423,11 +423,67 @@ export async function POST(request: Request) {
     } else if (action === "updateBillDetails") {
       const value = payload.bill as Record<string, unknown>;
       if (!clean(value.customerName) || !clean(value.customerPhone)) return Response.json({ error: "Customer name and phone are required." }, { status: 400 });
-      await env.DB.prepare(`UPDATE bills SET customer_name=?,customer_phone=?,customer_address=?,staff_name=?,counter_name=?,delivery_date=?,
-        order_notes=?,accountant_name=?,manager_name=?
-        WHERE id=? AND status<>'cancelled'`).bind(clean(value.customerName), clean(value.customerPhone), clean(value.customerAddress),
-          clean(value.staffName), clean(value.counterName), clean(value.deliveryDate), clean(value.orderNotes),
-          clean(value.accountantName), clean(value.managerName), clean(value.id)).run();
+      const id = clean(value.id);
+      const existing = await env.DB.prepare(`SELECT items_json AS itemsJson,status,discount_type AS discountType,discount_value AS discountValue,
+        card_charge AS cardCharge,transport_charge AS transportCharge,other_charge AS otherCharge,paid_amount AS paidAmount,bill_no AS billNo
+        FROM bills WHERE id=?`).bind(id).first<Record<string, unknown>>();
+      if (!existing || existing.status === "cancelled") return Response.json({ error: "Cancelled or missing order cannot be edited." }, { status: 400 });
+      const incoming = Array.isArray(value.items) ? value.items as BillItemInput[] : [];
+      const items = incoming.map((item) => ({
+        productId: clean(item.productId), code: clean(item.code).toUpperCase(), hsnCode: clean(item.hsnCode),
+        name: clean(item.name), size: clean(item.size), woodType: clean(item.woodType), price: round2(numeric(item.price)),
+        qty: Math.max(1, whole(item.qty, 1)), againstOrder: Boolean(item.againstOrder),
+        againstOrderExtra: item.againstOrder ? round2(numeric(item.againstOrderExtra)) : 0,
+        customizeDetails: clean(item.customizeDetails),
+      })).filter((item) => item.name && item.productId);
+      if (!items.length) return Response.json({ error: "Keep at least one valid product in the order." }, { status: 400 });
+      const oldItems = safeJson<BillItemInput[]>(existing.itemsJson, []);
+      const readyQty = (rows: BillItemInput[]) => rows.reduce((map, item) => {
+        if (!item.againstOrder && clean(item.productId)) map.set(clean(item.productId), (map.get(clean(item.productId)) || 0) + Math.max(1, whole(item.qty, 1)));
+        return map;
+      }, new Map<string, number>());
+      const oldReady = readyQty(oldItems), newReady = readyQty(items);
+      const productIds = [...new Set([...oldReady.keys(), ...newReady.keys()])];
+      const productStock = new Map<string, number>();
+      if (productIds.length) {
+        const rows = await env.DB.prepare(`SELECT id,stock_qty AS stockQty FROM products WHERE id IN (${productIds.map(() => "?").join(",")})`).bind(...productIds).all<{ id: string; stockQty: number }>();
+        rows.results.forEach((row) => productStock.set(row.id, Number(row.stockQty)));
+      }
+      for (const productId of productIds) {
+        const extraNeeded = (newReady.get(productId) || 0) - (oldReady.get(productId) || 0);
+        if (extraNeeded > (productStock.get(productId) || 0)) return Response.json({ error: "Not enough ready stock for the edited quantity." }, { status: 409 });
+      }
+      const productTotal = round2(items.reduce((sum, item) => sum + item.price * item.qty, 0));
+      const againstOrderExtra = round2(items.reduce((sum, item) => sum + item.againstOrderExtra, 0));
+      const subtotal = round2(productTotal + againstOrderExtra);
+      const discountType = clean(existing.discountType, "amount") === "percent" ? "percent" : "amount";
+      const discountValue = numeric(existing.discountValue);
+      const discount = round2(discountType === "percent" ? subtotal * Math.min(100, discountValue) / 100 : Math.min(subtotal, discountValue));
+      const goodsTotal = round2(Math.max(0, subtotal - discount));
+      const setting = await env.DB.prepare("SELECT gst_rate AS gstRate FROM settings WHERE id=1").first<{ gstRate: number }>();
+      const gstRate = Math.max(0, Number(setting?.gstRate ?? 18));
+      const taxableValue = gstRate > 0 ? round2(goodsTotal / (1 + gstRate / 100)) : goodsTotal;
+      const gst = round2(goodsTotal - taxableValue), cgst = round2(gst / 2), sgst = round2(gst - cgst);
+      const grandTotal = round2(goodsTotal + numeric(existing.cardCharge) + numeric(existing.transportCharge) + numeric(existing.otherCharge));
+      const paidAmount = round2(numeric(existing.paidAmount));
+      if (paidAmount > grandTotal) return Response.json({ error: "Collected payment is higher than the edited total. Record the refund before reducing this order." }, { status: 400 });
+      const statements = productIds.map((productId) => env.DB.prepare("UPDATE products SET stock_qty=stock_qty+?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+        .bind((oldReady.get(productId) || 0) - (newReady.get(productId) || 0), productId));
+      statements.push(env.DB.prepare(`UPDATE bills SET customer_name=?,customer_phone=?,customer_address=?,items_json=?,staff_name=?,counter_name=?,delivery_date=?,
+        order_notes=?,accountant_name=?,manager_name=?,product_total=?,against_order_extra=?,subtotal=?,discount=?,taxable_value=?,cgst=?,sgst=?,gst=?,grand_total=?,balance_amount=?
+        WHERE id=? AND status<>'cancelled'`).bind(clean(value.customerName), clean(value.customerPhone), clean(value.customerAddress), JSON.stringify(items),
+          clean(value.staffName), clean(value.counterName), clean(value.deliveryDate), clean(value.orderNotes), clean(value.accountantName), clean(value.managerName),
+          productTotal, againstOrderExtra, subtotal, discount, taxableValue, cgst, sgst, gst, grandTotal, round2(grandTotal - paidAmount), id));
+      const assignments = await env.DB.prepare("SELECT id,product_id AS productId FROM supplier_assignments WHERE bill_id=?").bind(id).all<{ id: string; productId: string }>();
+      for (const assignment of assignments.results) {
+        const item = items.find((row) => row.productId === assignment.productId && row.againstOrder);
+        statements.push(item
+          ? env.DB.prepare("UPDATE supplier_assignments SET product_code=?,product_name=?,qty=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(item.code, item.name, item.qty, assignment.id)
+          : env.DB.prepare("DELETE FROM supplier_assignments WHERE id=?").bind(assignment.id));
+      }
+      statements.push(env.DB.prepare(`UPDATE tasks SET title=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE linked_bill_id=? AND category='Financial'`)
+        .bind(`Collect ${moneyForTask(round2(grandTotal - paidAmount))} balance · ${clean(existing.billNo)}`, grandTotal - paidAmount > 0 ? "Pending" : "Completed", id));
+      await env.DB.batch(statements);
     } else if (action === "setDelivery") {
       const delivered = Boolean(payload.delivered);
       await env.DB.prepare("UPDATE bills SET delivery_status=?,delivered_at=? WHERE id=? AND status<>'cancelled'")
@@ -459,6 +515,11 @@ export async function POST(request: Request) {
       const value = payload.task as TaskInput;
       if (!clean(value?.title)) return Response.json({ error: "Task title is required." }, { status: 400 });
       const id = clean(value.id) || uid("task");
+      const duplicate = await env.DB.prepare(`SELECT id FROM tasks WHERE id<>? AND lower(trim(category))=lower(trim(?))
+        AND lower(trim(title))=lower(trim(?)) AND lower(trim(details))=lower(trim(?)) AND lower(trim(assigned_to))=lower(trim(?))
+        AND due_date=? AND linked_customer_phone=? LIMIT 1`).bind(id, clean(value.category, "General"), clean(value.title), clean(value.details),
+          clean(value.assignedTo), clean(value.dueDate), clean(value.linkedCustomerPhone)).first<{ id: string }>();
+      if (duplicate) return Response.json({ error: "This exact task is already saved. Open the existing task instead of creating a duplicate." }, { status: 409 });
       await env.DB.prepare(`INSERT INTO tasks
         (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)

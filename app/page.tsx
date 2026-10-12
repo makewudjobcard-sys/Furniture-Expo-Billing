@@ -164,6 +164,7 @@ type DashboardAction = {
   open: () => void;
   perform?: () => void | Promise<unknown>;
 };
+type ThemeName = "forest" | "light" | "midnight" | "ocean" | "rose";
 
 const EMPTY_PRODUCT = {
   id: "",
@@ -219,6 +220,13 @@ const taskTemplates = [
   { icon: "◎", category: "Marketing", title: "Marketing activity", details: "Plan today’s promotion, social post or lead follow-up." },
   { icon: "↗", category: "Development", title: "Business development", details: "Review improvement ideas, staff needs and showroom growth work." },
   { icon: "₹", category: "Financial Commitment", title: "Payment commitment", details: "Record the payable/receivable amount and completion plan." },
+];
+const themes: Array<{ id: ThemeName; label: string; colors: string[] }> = [
+  { id: "forest", label: "Dark Green", colors: ["#17372d", "#ffffff", "#d96b3d"] },
+  { id: "light", label: "Clean White", colors: ["#ffffff", "#f1f4f2", "#25634f"] },
+  { id: "midnight", label: "Midnight", colors: ["#111827", "#202a3a", "#60a5fa"] },
+  { id: "ocean", label: "Ocean Blue", colors: ["#123b57", "#f5fbff", "#2787b7"] },
+  { id: "rose", label: "Soft Rose", colors: ["#4a2635", "#fff8fa", "#bf5d7a"] },
 ];
 const palette = ["clay", "sage", "sand", "ink", "ochre", "rose"];
 
@@ -403,6 +411,7 @@ export default function Home() {
   const [taskFilter, setTaskFilter] = useState<"active" | "completed" | "all">("active");
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [theme, setTheme] = useState<ThemeName>("forest");
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
   const [interactionForm, setInteractionForm] = useState<Partial<CustomerInteraction>>({ type: "Follow-up", status: "Open" });
@@ -417,11 +426,28 @@ export default function Home() {
   const scanVideoRef = useRef<HTMLVideoElement>(null);
   const scanControlsRef = useRef<{ stop: () => void } | null>(null);
   const billRequestIdRef = useRef("");
+  const taskSaveLockRef = useRef(false);
 
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 3400);
   }, []);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("furniture-expo-theme") as ThemeName | null;
+    const next = themes.some((item) => item.id === saved) ? saved! : "forest";
+    const frame = window.requestAnimationFrame(() => {
+      setTheme(next);
+      document.documentElement.dataset.theme = next;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  function changeTheme(next: ThemeName) {
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+    window.localStorage.setItem("furniture-expo-theme", next);
+  }
 
   useEffect(() => {
     let current = true;
@@ -1117,8 +1143,14 @@ export default function Home() {
   }
   async function saveTask(event: FormEvent) {
     event.preventDefault();
-    const data = await mutate({ action: "saveTask", task: taskForm }, taskForm.id ? "Task updated." : "Task added to dashboard.");
-    if (data) { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending" }); setShowTaskForm(false); }
+    if (taskSaveLockRef.current) return;
+    taskSaveLockRef.current = true;
+    try {
+      const data = await mutate({ action: "saveTask", task: taskForm }, taskForm.id ? "Task updated." : "Task added to dashboard.");
+      if (data) { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending" }); setShowTaskForm(false); }
+    } finally {
+      taskSaveLockRef.current = false;
+    }
   }
   async function saveInteraction(event: FormEvent) {
     event.preventDefault();
@@ -1563,6 +1595,7 @@ export default function Home() {
           />
           </details>
         </nav>
+        <label className="sidebar-theme">Theme<select value={theme} onChange={(event) => changeTheme(event.target.value as ThemeName)}>{themes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         <div className={`sync-card ${online ? "online" : "offline"}`}>
           <span className="sync-dot" />
           <div>
@@ -1628,6 +1661,7 @@ export default function Home() {
               ["reports", "▤", "Reports", "Sales, staff work and downloadable reports"],
               ["settings", "⚙", "Settings", "Business, GST and staff setup"],
             ] as const).map(([page, icon, label, note]) => <button key={page} onClick={() => { setActive(page); setMobileMoreOpen(false); }}><span>{icon}</span><div><strong>{label}</strong><small>{note}</small></div><b>›</b></button>)}
+            <div className="mobile-theme-picker"><strong>Colour theme</strong><div>{themes.map((item) => <button className={theme === item.id ? "active" : ""} key={item.id} onClick={() => changeTheme(item.id)}><span>{item.colors.map((color) => <i key={color} style={{ background: color }} />)}</span>{item.label}</button>)}</div></div>
           </div>
         </div>}
 
@@ -1923,18 +1957,14 @@ export default function Home() {
                             ＋
                           </button>
                         </div>
-                        <input
-                          className="line-price"
-                          type="number"
-                          min="0"
-                          value={item.price}
-                          onChange={(event) =>
-                            updateCart(index, {
-                              price: Math.max(0, Number(event.target.value)),
-                            })
-                          }
-                          aria-label="Unit price"
-                        />
+                        <label className="line-price-field"><span>Unit price</span><input
+                            className="line-price"
+                            type="number"
+                            min="0"
+                            value={item.price}
+                            onChange={(event) => updateCart(index, { price: Math.max(0, Number(event.target.value)) })}
+                            aria-label="Unit price"
+                          /></label>
                       </div>
                       <select
                         className={`order-select ${item.againstOrder ? "against" : "stock"}`}
@@ -2000,6 +2030,7 @@ export default function Home() {
                   </div>
                 )}
               </div>
+              <div className="cart-scroll-area">
               <div className="customer-fields">
                 <div className="field-pair">
                   <label>
@@ -2079,15 +2110,7 @@ export default function Home() {
               </div>
               <div className="totals detailed">
                 <div>
-                  <span>Product total</span>
-                  <strong>{money(productTotal)}</strong>
-                </div>
-                <div>
-                  <span>Against Order extra</span>
-                  <strong>{money(againstOrderExtra)}</strong>
-                </div>
-                <div>
-                  <span>Subtotal</span>
+                  <span>Items total</span>
                   <strong>{money(subtotal)}</strong>
                 </div>
                 <label>
@@ -2203,6 +2226,7 @@ export default function Home() {
                 Atomic stock check prevents the same last piece being sold
                 twice.
               </p>
+              </div>
             </aside>
           </section>
         )}
@@ -2804,6 +2828,10 @@ export default function Home() {
               </div>
             </div>
             <form className="settings-card" onSubmit={saveSettings}>
+              <div className="form-section theme-section">
+                <div><strong>App appearance</strong><p>Choose a comfortable colour theme. This selection stays on this device.</p></div>
+                <div className="theme-grid">{themes.map((item) => <button type="button" className={theme === item.id ? "active" : ""} key={item.id} onClick={() => changeTheme(item.id)}><span>{item.colors.map((color) => <i key={color} style={{ background: color }} />)}</span><strong>{item.label}</strong>{theme === item.id && <em>Selected</em>}</button>)}</div>
+              </div>
               <div className="form-section">
                 <div>
                   <strong>Business identity</strong>
@@ -3190,7 +3218,7 @@ export default function Home() {
                 <span className="eyebrow">Order booking slip</span>
                 <h2>{selectedBill.billNo}</h2>
               </div>
-              <button onClick={() => setSelectedBill(null)}>×</button>
+              <div className="modal-head-actions">{selectedBill.status !== "cancelled" && <button className="edit-order-top" onClick={() => setEditingBill({ ...selectedBill, items: selectedBill.items.map((item) => ({ ...item })) })}>✎ Edit order</button>}<button className="modal-close" onClick={() => setSelectedBill(null)}>×</button></div>
             </div>
             {selectedBill.status === "cancelled" && (
               <div className="cancelled-banner">
@@ -3251,12 +3279,8 @@ export default function Home() {
             </div>
             <div className="invoice-totals">
               <div>
-                <span>Product total</span>
-                <strong>{money(selectedBill.productTotal)}</strong>
-              </div>
-              <div>
-                <span>Against Order extra</span>
-                <strong>{money(selectedBill.againstOrderExtra)}</strong>
+                <span>Items total</span>
+                <strong>{money(selectedBill.productTotal + selectedBill.againstOrderExtra)}</strong>
               </div>
               <div>
                 <span>Discount</span>
@@ -3414,9 +3438,9 @@ export default function Home() {
               {selectedBill.status !== "cancelled" && (
                 <button
                   className="secondary-action"
-                  onClick={() => setEditingBill({ ...selectedBill })}
+                  onClick={() => setEditingBill({ ...selectedBill, items: selectedBill.items.map((item) => ({ ...item })) })}
                 >
-                  Edit details
+                  Edit full order
                 </button>
               )}
               {selectedBill.status !== "cancelled" && (
@@ -3452,7 +3476,7 @@ export default function Home() {
       {editingBill && (
         <div className="modal-backdrop">
           <form
-            className="modal-card"
+            className="modal-card edit-order-modal"
             onSubmit={async (event) => {
               event.preventDefault();
               const data = await mutate(
@@ -3476,6 +3500,16 @@ export default function Home() {
                 ×
               </button>
             </div>
+            <section className="edit-order-items">
+              <div className="edit-order-items-head"><div><span className="eyebrow">Products</span><h3>Edit saved products</h3></div><small>Name, size, unit price and quantity can be corrected here.</small></div>
+              {editingBill.items.map((item, index) => <div className="edit-order-item" key={`${item.productId}-${index}`}>
+                <label>Product name<input value={item.name} onChange={(event) => setEditingBill({ ...editingBill, items: editingBill.items.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.target.value } : row) })} required /></label>
+                <label>Size<input value={item.size || ""} onChange={(event) => setEditingBill({ ...editingBill, items: editingBill.items.map((row, rowIndex) => rowIndex === index ? { ...row, size: event.target.value } : row) })} /></label>
+                <label>Unit price<input type="number" min="0" value={item.price} onChange={(event) => setEditingBill({ ...editingBill, items: editingBill.items.map((row, rowIndex) => rowIndex === index ? { ...row, price: Math.max(0, Number(event.target.value)) } : row) })} required /></label>
+                <label>Qty<input type="number" min="1" step="1" value={item.qty} onChange={(event) => setEditingBill({ ...editingBill, items: editingBill.items.map((row, rowIndex) => rowIndex === index ? { ...row, qty: Math.max(1, Math.floor(Number(event.target.value) || 1)) } : row) })} required /></label>
+                <button type="button" className="edit-item-remove" disabled={editingBill.items.length <= 1} onClick={() => setEditingBill({ ...editingBill, items: editingBill.items.filter((_, rowIndex) => rowIndex !== index) })}>Remove</button>
+              </div>)}
+            </section>
             <div className="form-grid">
               <label>
                 Customer name
@@ -3570,7 +3604,7 @@ export default function Home() {
               >
                 Cancel
               </button>
-              <button className="primary-small">Save changes</button>
+              <button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save order changes"}</button>
             </div>
           </form>
         </div>
@@ -3607,7 +3641,7 @@ export default function Home() {
             <label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Completed</option></select></label>
             <label>Customer phone<input value={taskForm.linkedCustomerPhone || ""} onChange={(event) => setTaskForm({ ...taskForm, linkedCustomerPhone: event.target.value })} /></label>
           </div>
-          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowTaskForm(false)}>Cancel</button><button className="primary-small">Save task</button></div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowTaskForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save task once"}</button></div>
         </form></div>
       )}
 
