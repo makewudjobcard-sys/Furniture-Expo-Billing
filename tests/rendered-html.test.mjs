@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("defines the secure Furniture Expo shell", async () => {
+test("defines the secure Smaarthome Furniture shell", async () => {
   const [layout, page] = await Promise.all([
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(layout, /Furniture Expo — Live Billing Desk/i);
+  assert.match(layout, /Smaarthome Furniture — Showroom Billing/i);
   assert.match(page, /className="login-shell"/);
-  assert.match(page, /Opening secure billing desk/);
+  assert.match(page, /Opening secure showroom desk/);
   assert.match(page, /Cloud Billing|Live Billing/i);
   assert.doesNotMatch(page, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });

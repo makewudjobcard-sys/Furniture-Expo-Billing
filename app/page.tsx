@@ -124,6 +124,10 @@ type SupplierAssignment = {
   advancePaid: number; expectedDate: string; status: string; notes: string;
   createdAt: string; updatedAt: string;
 };
+type AuditLog = {
+  id: string; action: string; entityType: string; entityId: string;
+  summary: string; createdAt: string;
+};
 type ExpoSettings = {
   businessName: string;
   subtitle: string;
@@ -145,6 +149,7 @@ type ExpoState = {
   tasks: ExpoTask[];
   interactions: CustomerInteraction[];
   supplierAssignments: SupplierAssignment[];
+  auditLogs: AuditLog[];
   syncedAt: string;
 };
 type ReportData = {
@@ -164,7 +169,7 @@ type DashboardAction = {
   open: () => void;
   perform?: () => void | Promise<unknown>;
 };
-type ThemeName = "forest" | "light" | "midnight" | "ocean" | "rose";
+type ThemeName = "teak" | "forest" | "light" | "midnight" | "ocean" | "rose";
 
 const EMPTY_PRODUCT = {
   id: "",
@@ -182,13 +187,13 @@ const EMPTY_PRODUCT = {
   imageUrl: "",
 };
 const DEFAULT_SETTINGS: ExpoSettings = {
-  businessName: "Furniture Expo",
-  subtitle: "Live Billing Desk",
+  businessName: "Smaarthome Furniture",
+  subtitle: "Showroom Billing & Operations",
   gstin: "",
   phone: "",
   address: "",
   gstRate: 18,
-  billPrefix: "EXP",
+  billPrefix: "SHF",
   staffNames: [],
   counterNames: ["Counter 1"],
   defaultCounter: "Counter 1",
@@ -214,6 +219,7 @@ const categories = [
   "Others",
 ];
 const paymentModes = ["CASH", "GPAY", "CARD", "RTGS", "BAJAJ", "CHEQUE"];
+const deliveryStages = ["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"];
 const taskTemplates = [
   { icon: "☎", category: "Follow-up", title: "Customer follow-up", details: "Call the customer and record the next action." },
   { icon: "✦", category: "Cleaning", title: "Showroom cleaning check", details: "Check entrance, displays, products and billing counter." },
@@ -222,6 +228,7 @@ const taskTemplates = [
   { icon: "₹", category: "Financial Commitment", title: "Payment commitment", details: "Record the payable/receivable amount and completion plan." },
 ];
 const themes: Array<{ id: ThemeName; label: string; colors: string[] }> = [
+  { id: "teak", label: "Teak & Ivory", colors: ["#563a2c", "#fffaf0", "#b76a3c"] },
   { id: "forest", label: "Dark Green", colors: ["#17372d", "#ffffff", "#d96b3d"] },
   { id: "light", label: "Clean White", colors: ["#ffffff", "#f1f4f2", "#25634f"] },
   { id: "midnight", label: "Midnight", colors: ["#111827", "#202a3a", "#60a5fa"] },
@@ -348,6 +355,7 @@ export default function Home() {
     tasks: [],
     interactions: [],
     supplierAssignments: [],
+    auditLogs: [],
     syncedAt: "",
   });
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -412,6 +420,8 @@ export default function Home() {
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeName>("forest");
+  const [billingStep, setBillingStep] = useState<1 | 2 | 3>(1);
+  const [restoredOffline, setRestoredOffline] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
   const [interactionForm, setInteractionForm] = useState<Partial<CustomerInteraction>>({ type: "Follow-up", status: "Open" });
@@ -427,6 +437,7 @@ export default function Home() {
   const scanControlsRef = useRef<{ stop: () => void } | null>(null);
   const billRequestIdRef = useRef("");
   const taskSaveLockRef = useRef(false);
+  const draftLoadedRef = useRef(false);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -434,8 +445,8 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("furniture-expo-theme") as ThemeName | null;
-    const next = themes.some((item) => item.id === saved) ? saved! : "forest";
+    const saved = window.localStorage.getItem("smaarthome-theme") as ThemeName | null;
+    const next = themes.some((item) => item.id === saved) ? saved! : "teak";
     const frame = window.requestAnimationFrame(() => {
       setTheme(next);
       document.documentElement.dataset.theme = next;
@@ -446,7 +457,7 @@ export default function Home() {
   function changeTheme(next: ThemeName) {
     setTheme(next);
     document.documentElement.dataset.theme = next;
-    window.localStorage.setItem("furniture-expo-theme", next);
+    window.localStorage.setItem("smaarthome-theme", next);
   }
 
   useEffect(() => {
@@ -454,10 +465,13 @@ export default function Home() {
     fetch("/api/auth/session", { cache: "no-store" })
       .then((response) => response.json())
       .then((result: { authenticated?: boolean }) => {
-        if (current) setAuthStatus(result.authenticated ? "logged_in" : "logged_out");
+        if (current) {
+          setAuthStatus(result.authenticated ? "logged_in" : "logged_out");
+          if (result.authenticated) window.localStorage.setItem("smaarthome-offline-session", "ready");
+        }
       })
       .catch(() => {
-        if (current) setAuthStatus("logged_out");
+        if (current) setAuthStatus(window.localStorage.getItem("smaarthome-offline-session") === "ready" ? "logged_in" : "logged_out");
       });
     return () => { current = false; };
   }, []);
@@ -471,6 +485,7 @@ export default function Home() {
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Unable to sign in.");
       setAuthStatus("logged_in");
+      window.localStorage.setItem("smaarthome-offline-session", "ready");
       setLoginForm({ username: "", password: "" });
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Unable to sign in.");
@@ -481,10 +496,16 @@ export default function Home() {
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, suppliers: [], tasks: [], interactions: [], supplierAssignments: [], syncedAt: "" });
+    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, suppliers: [], tasks: [], interactions: [], supplierAssignments: [], auditLogs: [], syncedAt: "" });
     setCart([]);
+    window.localStorage.removeItem("smaarthome-offline-session");
     setAuthStatus("logged_out");
   }
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  }, []);
 
   const load = useCallback(
     async (silent = false) => {
@@ -496,6 +517,8 @@ export default function Home() {
         if (!response.ok)
           throw new Error(data.error || "Cloud sync unavailable");
         setState(data);
+        window.localStorage.setItem("smaarthome-offline-state", JSON.stringify(data));
+        setRestoredOffline(false);
         setSettingsForm(data.settings || DEFAULT_SETTINGS);
         setStaffText((data.settings?.staffNames || []).join(", "));
         setCounterText(
@@ -509,6 +532,16 @@ export default function Home() {
         setOnline(true);
       } catch (error) {
         setOnline(false);
+        const cached = window.localStorage.getItem("smaarthome-offline-state");
+        if (cached) {
+          try {
+            const restored = JSON.parse(cached) as ExpoState;
+            setState({ ...restored, auditLogs: restored.auditLogs || [] });
+            setRestoredOffline(true);
+          } catch {
+            window.localStorage.removeItem("smaarthome-offline-state");
+          }
+        }
         if (!silent)
           notify(error instanceof Error ? error.message : "Unable to connect");
       } finally {
@@ -531,6 +564,49 @@ export default function Home() {
     };
   }, [load, authStatus]);
 
+  useEffect(() => {
+    if (authStatus !== "logged_in" || draftLoadedRef.current) return;
+    draftLoadedRef.current = true;
+    const saved = window.localStorage.getItem("smaarthome-order-draft");
+    if (!saved) return;
+    try {
+      const draft = JSON.parse(saved) as {
+        cart?: CartItem[]; customer?: typeof customer; billingStep?: 1 | 2 | 3;
+        discountType?: "amount" | "percent"; discountValue?: number; paidAmount?: number;
+        paymentMode?: string; cardCharge?: number; transportCharge?: number; otherCharge?: number;
+      };
+      if (draft.cart?.length) {
+        window.setTimeout(() => {
+          setCart(draft.cart || []);
+          setCustomer((current) => ({ ...current, ...draft.customer }));
+          setBillingStep(draft.billingStep || 1);
+          setDiscountType(draft.discountType || "amount");
+          setDiscountValue(draft.discountValue || 0);
+          setPaidAmount(draft.paidAmount || 0);
+          setPaymentMode(draft.paymentMode || "CASH");
+          setCardCharge(draft.cardCharge || 0);
+          setTransportCharge(draft.transportCharge || 0);
+          setOtherCharge(draft.otherCharge || 0);
+          notify("Your unfinished order draft was restored.");
+        }, 0);
+      }
+    } catch {
+      window.localStorage.removeItem("smaarthome-order-draft");
+    }
+  }, [authStatus, notify]);
+
+  useEffect(() => {
+    if (authStatus !== "logged_in" || !draftLoadedRef.current) return;
+    if (!cart.length) {
+      window.localStorage.removeItem("smaarthome-order-draft");
+      return;
+    }
+    window.localStorage.setItem("smaarthome-order-draft", JSON.stringify({
+      cart, customer, billingStep, discountType, discountValue, paidAmount,
+      paymentMode, cardCharge, transportCharge, otherCharge,
+    }));
+  }, [authStatus, cart, customer, billingStep, discountType, discountValue, paidAmount, paymentMode, cardCharge, transportCharge, otherCharge]);
+
   async function mutate(payload: Record<string, unknown>, success: string) {
     setBusy(true);
     try {
@@ -543,6 +619,8 @@ export default function Home() {
       if (response.status === 401) setAuthStatus("logged_out");
       if (!response.ok) throw new Error(data.error || "Unable to save");
       setState(data);
+      window.localStorage.setItem("smaarthome-offline-state", JSON.stringify(data));
+      setRestoredOffline(false);
       setSettingsForm(data.settings || DEFAULT_SETTINGS);
       setOnline(true);
       notify(success);
@@ -865,6 +943,8 @@ export default function Home() {
       setCardCharge(0);
       setTransportCharge(0);
       setOtherCharge(0);
+      setBillingStep(1);
+      window.localStorage.removeItem("smaarthome-order-draft");
       setActive("bills");
       setSelectedBill(created || null);
       const againstItems = created?.items.filter((item) => item.againstOrder) || [];
@@ -886,6 +966,34 @@ export default function Home() {
         })));
       }
     }
+  }
+
+  function continueBilling() {
+    if (billingStep === 1) {
+      if (!cart.length) return notify("Add at least one product to continue.");
+      setBillingStep(2);
+      return;
+    }
+    if (!customer.name.trim() || !customer.phone.trim())
+      return notify("Enter customer name and mobile number to continue.");
+    if (!customer.deliveryDate) return notify("Choose the expected delivery date.");
+    setBillingStep(3);
+  }
+
+  function downloadBackup() {
+    const backup = {
+      app: "Smaarthome Furniture Billing",
+      exportedAt: new Date().toISOString(),
+      version: 2,
+      data: state,
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = `smaarthome-furniture-backup-${isoDate()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(anchor.href);
+    notify("Full showroom data backup downloaded.");
   }
 
   async function saveProduct(event: FormEvent) {
@@ -960,13 +1068,13 @@ export default function Home() {
         category: index("Category"),
         size: index("Size"),
         wood: index("Wood Type", "Wood"),
-        price: index("Expo Price (Incl. GST)", "Expo Price", "Price"),
+        price: index("Showroom Price (Incl. GST)", "Showroom Price", "Expo Price (Incl. GST)", "Expo Price", "Price"),
         stock: index("Stock Qty", "Stock", "Quantity"),
         mrp: index("MRP"),
         notes: index("Notes"),
       };
       if (columns.name < 0 || columns.price < 0)
-        throw new Error("Product Name and Expo Price columns are required.");
+        throw new Error("Product Name and Showroom Price columns are required.");
       const embedded = file.name.toLowerCase().endsWith(".xlsx")
         ? await extractEmbeddedExcelImages(buffer)
         : [];
@@ -1082,7 +1190,7 @@ export default function Home() {
         "Category",
         "Size",
         "Wood Type",
-        "Expo Price (Incl. GST)",
+        "Showroom Price (Incl. GST)",
         "Stock Qty",
         "MRP",
         "Notes",
@@ -1107,7 +1215,7 @@ export default function Home() {
       (wch) => ({ wch }),
     );
     XLSX.utils.book_append_sheet(workbook, sheet, "Product Inventory");
-    XLSX.writeFile(workbook, "Furniture_Expo_Product_Inventory_Template.xlsx");
+    XLSX.writeFile(workbook, "Smaarthome_Furniture_Product_Inventory_Template.xlsx");
   }
 
   async function saveSettings(event: FormEvent) {
@@ -1132,7 +1240,7 @@ export default function Home() {
             : counterNames[0] || "Counter 1",
         },
       },
-      "Expo settings, GST and staff lists saved.",
+      "Showroom settings, GST and staff lists saved.",
     );
   }
 
@@ -1514,14 +1622,14 @@ export default function Home() {
     .values()].sort((a, b) => b.sales - a.sales);
 
   if (authStatus === "checking") {
-    return <div className="login-shell"><div className="login-loading"><span>FE</span><strong>Furniture Expo</strong><small>Opening secure billing desk…</small></div></div>;
+    return <div className="login-shell"><div className="login-loading"><span>SH</span><strong>Smaarthome Furniture</strong><small>Opening secure showroom desk…</small></div></div>;
   }
 
   if (authStatus === "logged_out") {
     return (
       <div className="login-shell">
         <section className="login-card">
-          <div className="login-brand"><span>FE</span><div><strong>Furniture Expo</strong><small>Cloud Billing & Inventory</small></div></div>
+          <div className="login-brand"><span>SH</span><div><strong>Smaarthome Furniture</strong><small>Cloud Billing & Inventory</small></div></div>
           <div className="login-copy"><span className="eyebrow">Authorised counter access</span><h1>Welcome back.</h1><p>Sign in to continue. Every bill, stock update and product image stays synced across your PCs and mobiles.</p></div>
           <form onSubmit={submitLogin}>
             <label>Username<input value={loginForm.username} onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value })} autoComplete="username" required /></label>
@@ -1531,7 +1639,7 @@ export default function Home() {
           </form>
           <div className="login-assurance"><span>● Live cloud data</span><span>Order slip + GST invoice</span><span>Mobile + PC</span></div>
         </section>
-        <aside className="login-visual"><span className="eyebrow">Expo operations</span><h2>One stock.<br />Every counter.</h2><p>Ready stock, Against Order, collections and deliveries—kept together in real time.</p><div className="login-stats"><div><strong>6 sec</strong><small>Auto sync</small></div><div><strong>100%</strong><small>Cloud saved</small></div><div><strong>QR</strong><small>Fast billing</small></div></div></aside>
+        <aside className="login-visual"><span className="eyebrow">Showroom operations</span><h2>One stock.<br />Every counter.</h2><p>Ready stock, customer orders, collections and deliveries—kept together in real time.</p><div className="login-stats"><div><strong>6 sec</strong><small>Auto sync</small></div><div><strong>100%</strong><small>Cloud saved</small></div><div><strong>QR</strong><small>Fast billing</small></div></div></aside>
       </div>
     );
   }
@@ -1540,7 +1648,7 @@ export default function Home() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-mark">
-          <span>FE</span>
+          <span>SH</span>
           <div>
             <strong>{state.settings.businessName}</strong>
             <small>{state.settings.subtitle}</small>
@@ -1615,7 +1723,7 @@ export default function Home() {
       <main className="main-content">
         <header className="mobile-header">
           <div className="brand-mark compact">
-            <span>FE</span>
+            <span>SH</span>
             <div>
               <strong>{state.settings.businessName}</strong>
               <small>{online ? "Cloud live" : "Offline"}</small>
@@ -1623,6 +1731,7 @@ export default function Home() {
           </div>
           <div className="mobile-head-actions"><button className="icon-button" onClick={() => load()} aria-label="Sync now">↻</button><button className="icon-button" onClick={logout} aria-label="Sign out">↪</button></div>
         </header>
+        {!online && <div className="offline-banner"><span>◌</span><div><strong>Offline mode</strong><small>{restoredOffline ? "Showing your last synced showroom data. Any open order draft is saved on this device." : "Your order draft is safe. Reconnect before final billing."}</small></div><button onClick={() => load()}>Retry sync</button></div>}
         <div className="mobile-tabs" role="tablist">
           <Nav
             active={active === "dashboard"}
@@ -1833,8 +1942,14 @@ export default function Home() {
         )}
 
         {active === "billing" && (
-          <section className="billing-layout">
-            <div className="catalog-panel">
+          <section className={`billing-layout wizard-step-${billingStep}`}>
+            <div className="billing-progress" aria-label="Billing progress">
+              {([1, 2, 3] as const).map((step) => <button key={step} className={billingStep === step ? "active" : billingStep > step ? "done" : ""} onClick={() => step < billingStep && setBillingStep(step)} disabled={step > billingStep}>
+                <span>{billingStep > step ? "✓" : step}</span><div><strong>{step === 1 ? "Products" : step === 2 ? "Customer & delivery" : "Payment & confirm"}</strong><small>{step === 1 ? "Choose items" : step === 2 ? "Promise details" : "Review total"}</small></div>
+              </button>)}
+              <p>{cart.reduce((sum, item) => sum + item.qty, 0)} items · {money(grandTotal)} <em>{online ? "Draft auto-saved" : "Offline draft safe"}</em></p>
+            </div>
+            <div className={`catalog-panel ${billingStep !== 1 ? "wizard-hidden" : ""}`}>
               <div className="section-heading">
                 <div>
                   <span className="eyebrow">Showroom order desk</span>
@@ -1911,17 +2026,17 @@ export default function Home() {
                 ))}
               </div>
             </div>
-            <aside className="cart-panel">
+            <aside className={`cart-panel wizard-cart step-${billingStep}`}>
               <div className="cart-title">
                 <div>
-                  <span className="eyebrow">Current order</span>
-                  <h2>Order booking slip</h2>
+                  <span className="eyebrow">Step {billingStep} of 3</span>
+                  <h2>{billingStep === 1 ? "Selected products" : billingStep === 2 ? "Customer & delivery" : "Payment & confirm"}</h2>
                 </div>
                 <span className="count-badge">
                   {cart.reduce((sum, item) => sum + item.qty, 0)}
                 </span>
               </div>
-              <div className="cart-items">
+              <div className={`cart-items ${billingStep !== 1 ? "wizard-hidden" : ""}`}>
                 {cart.map((item, index) => (
                   <div
                     className="cart-item expanded"
@@ -2030,8 +2145,9 @@ export default function Home() {
                   </div>
                 )}
               </div>
+              {billingStep === 1 && <div className="wizard-actions single"><button className="primary-action" disabled={!cart.length} onClick={continueBilling}>Continue to customer <span>→</span></button></div>}
               <div className="cart-scroll-area">
-              <div className="customer-fields">
+              <div className={`customer-fields ${billingStep !== 2 ? "wizard-hidden" : ""}`}>
                 <div className="field-pair">
                   <label>
                     Customer name
@@ -2107,7 +2223,9 @@ export default function Home() {
                   <label>Expected delivery<input type="date" value={customer.deliveryDate} onChange={(event) => setCustomer({ ...customer, deliveryDate: event.target.value })} required /></label>
                 </div>
                 <label>Order notes<textarea rows={2} value={customer.orderNotes} onChange={(event) => setCustomer({ ...customer, orderNotes: event.target.value })} placeholder="Transport extra, customization, advance terms…" /></label>
+                <div className="wizard-actions"><button className="secondary-action" onClick={() => setBillingStep(1)}>← Back to products</button><button className="primary-action" onClick={continueBilling}>Continue to payment <span>→</span></button></div>
               </div>
+              <div className={`checkout-step ${billingStep !== 3 ? "wizard-hidden" : ""}`}>
               <div className="totals detailed">
                 <div>
                   <span>Items total</span>
@@ -2152,7 +2270,7 @@ export default function Home() {
                   <strong>{money(sgst)}</strong>
                 </div>
                 <small className="gst-note">
-                  Expo price is GST inclusive · GST is split, not added again.
+                  Showroom price is GST inclusive · GST is split, not added again.
                 </small>
                 <div className="grand-total">
                   <span>Grand total</span>
@@ -2213,19 +2331,20 @@ export default function Home() {
                   <strong>{money(balance)}</strong>
                 </div>
               </div>
-              <button
-                className="primary-action"
-                disabled={!cart.length || busy || !online}
-                onClick={confirmBill}
-              >
-                {busy ? "Syncing…" : "Save order slip"}
-                <span>→</span>
-              </button>
+              <div className="wizard-actions"><button className="secondary-action" onClick={() => setBillingStep(2)}>← Back</button><button
+                  className="primary-action"
+                  disabled={!cart.length || busy || !online}
+                  onClick={confirmBill}
+                >
+                  {busy ? "Syncing…" : online ? "Save order slip" : "Connect to save"}
+                  <span>→</span>
+                </button></div>
               <p className="order-number-note">Order number is automatic, unique and continues from the last saved order.</p>
               <p className="stock-note">
                 Atomic stock check prevents the same last piece being sold
                 twice.
               </p>
+              </div>
               </div>
             </aside>
           </section>
@@ -2298,7 +2417,7 @@ export default function Home() {
               <Metric
                 label="Inventory value"
                 value={money(inventoryValue)}
-                note="At expo price"
+                note="At showroom price"
               />
               <Metric
                 label="Low / out stock"
@@ -2333,7 +2452,7 @@ export default function Home() {
                     <th>Product</th>
                     <th>Category</th>
                     <th>Specification</th>
-                    <th>Expo price</th>
+                    <th>Showroom price</th>
                     <th>Stock</th>
                     <th />
                   </tr>
@@ -2534,6 +2653,19 @@ export default function Home() {
                 note="Completed"
               />
             </div>
+            <section className="delivery-timeline-board">
+              <div className="card-heading"><div><span className="eyebrow">Customer & delivery timeline</span><h2>Every promise, stage by stage</h2><p>Open an order to see products, payments and customer details.</p></div></div>
+              <div className="timeline-orders">
+                {activeBills.filter((bill) => bill.deliveryStatus !== "Delivered").slice(0, 6).map((bill) => {
+                  const currentIndex = Math.max(0, deliveryStages.indexOf(bill.deliveryStatus || "Order Booked"));
+                  return <button className="timeline-order" key={bill.id} onClick={() => setSelectedBill(bill)}>
+                    <div className="timeline-customer"><span>{bill.customerName.slice(0, 1).toUpperCase()}</span><div><strong>{bill.customerName}</strong><small>{bill.billNo} · {bill.customerPhone} · Due {bill.deliveryDate || "not set"}</small></div><b>{money(bill.balanceAmount)} due</b></div>
+                    <div className="timeline-track">{deliveryStages.map((stage, index) => <span className={index < currentIndex ? "done" : index === currentIndex ? "current" : ""} key={stage}><i>{index <= currentIndex ? "✓" : index + 1}</i><small>{stage}</small></span>)}</div>
+                  </button>;
+                })}
+                {!activeBills.some((bill) => bill.deliveryStatus !== "Delivered") && <div className="today-empty">All active customer deliveries are complete.</div>}
+              </div>
+            </section>
             <div className="filter-row">
               {["all", "today", "upcoming", "pending", "delivered"].map(
                 (filter) => (
@@ -2822,7 +2954,7 @@ export default function Home() {
           <section className="page-section settings-page">
             <div className="section-heading">
               <div>
-                <span className="eyebrow">Expo setup</span>
+                <span className="eyebrow">Showroom setup</span>
                 <h1>Business, GST & counters.</h1>
                 <p>Invoice identity and counter suggestions sync everywhere.</p>
               </div>
@@ -2831,6 +2963,14 @@ export default function Home() {
               <div className="form-section theme-section">
                 <div><strong>App appearance</strong><p>Choose a comfortable colour theme. This selection stays on this device.</p></div>
                 <div className="theme-grid">{themes.map((item) => <button type="button" className={theme === item.id ? "active" : ""} key={item.id} onClick={() => changeTheme(item.id)}><span>{item.colors.map((color) => <i key={color} style={{ background: color }} />)}</span><strong>{item.label}</strong>{theme === item.id && <em>Selected</em>}</button>)}</div>
+              </div>
+              <div className="form-section safety-section">
+                <div><strong>Backup & offline safety</strong><p>Download a complete JSON copy. The latest synced data and unfinished order draft also stay available on this device.</p></div>
+                <div className="safety-actions"><button type="button" className="primary-small" onClick={downloadBackup}>↓ Download data backup</button><div className={`safety-status ${online ? "online" : "offline"}`}><span>●</span><strong>{online ? "Cloud sync active" : "Offline cache active"}</strong><small>{online ? "Supabase is connected" : "Reconnect before saving final bills"}</small></div></div>
+              </div>
+              <div className="form-section audit-section">
+                <div><strong>Audit history</strong><p>Recent billing, stock, delivery, customer and settings changes are recorded across devices.</p></div>
+                <div className="audit-list">{state.auditLogs.slice(0, 12).map((log) => <div key={log.id}><span>{log.entityType.slice(0, 1).toUpperCase()}</span><p><strong>{log.summary}</strong><small>{shortDate(log.createdAt)} · {log.action}</small></p></div>)}{!state.auditLogs.length && <div className="today-empty">New updates will appear here automatically.</div>}</div>
               </div>
               <div className="form-section">
                 <div>
@@ -2919,7 +3059,7 @@ export default function Home() {
                 <div>
                   <strong>GST Inclusive pricing</strong>
                   <p>
-                    Entered Expo Price is the final customer price. GST is split
+                    Entered Showroom Price is the final customer price. GST is split
                     from it, never added again.
                   </p>
                 </div>
@@ -3138,7 +3278,7 @@ export default function Home() {
                 />
               </label>
               <label>
-                Expo price incl. GST
+                Showroom price incl. GST
                 <input
                   type="number"
                   min="1"
@@ -4014,7 +4154,7 @@ function buildReport(
         "Size",
         "Wood Type",
         "Stock Qty",
-        "Expo Price",
+        "Showroom Price",
         "Stock Value",
         "Status",
       ],

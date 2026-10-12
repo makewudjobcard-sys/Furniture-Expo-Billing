@@ -13,8 +13,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
   const base = new URL(`${protocol}://${host}`);
-  const title = "Furniture Expo — Live Billing Desk";
-  const description = "Fast multi-counter furniture expo billing, inventory and payment tracking.";
+  const title = "Smaarthome Furniture — Showroom Billing";
+  const description = "Smaarthome Furniture billing, inventory, customer follow-up and delivery tracking.";
   return {
     metadataBase: base,
     title,

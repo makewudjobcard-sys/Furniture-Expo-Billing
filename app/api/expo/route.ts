@@ -51,7 +51,14 @@ async function ensureSchema() {
   const db = env.DB;
   if (db.dialect === "postgres") {
     await db.ensureSchema();
-    await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Furniture Expo','Live Billing Desk',18,'EXP')`).run();
+    await db.prepare(`CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '',
+      entity_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`).run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)").run();
+    await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Smaarthome Furniture','Showroom Billing & Operations',18,'SHF')`).run();
+    await db.prepare(`UPDATE settings SET business_name='Smaarthome Furniture',subtitle='Showroom Billing & Operations',bill_prefix=CASE WHEN bill_prefix='EXP' THEN 'SHF' ELSE bill_prefix END WHERE business_name='Furniture Expo'`).run();
     await db.prepare("INSERT OR IGNORE INTO counters (key,value) VALUES ('bill',0)").run();
     const count = await db.prepare("SELECT COUNT(*) AS count FROM products").first<{ count: number }>();
     if (!Number(count?.count || 0)) await db.batch(SAMPLE_PRODUCTS.map(productUpsertStatement));
@@ -81,16 +88,22 @@ async function ensureSchema() {
       status TEXT NOT NULL DEFAULT 'confirmed', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS settings (
-      id INTEGER PRIMARY KEY CHECK (id = 1), business_name TEXT NOT NULL DEFAULT 'Furniture Expo',
-      subtitle TEXT NOT NULL DEFAULT 'Live Billing Desk', gstin TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
-      address TEXT NOT NULL DEFAULT '', gst_rate REAL NOT NULL DEFAULT 18, bill_prefix TEXT NOT NULL DEFAULT 'EXP',
+      id INTEGER PRIMARY KEY CHECK (id = 1), business_name TEXT NOT NULL DEFAULT 'Smaarthome Furniture',
+      subtitle TEXT NOT NULL DEFAULT 'Showroom Billing & Operations', gstin TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '', gst_rate REAL NOT NULL DEFAULT 18, bill_prefix TEXT NOT NULL DEFAULT 'SHF',
       staff_names_json TEXT NOT NULL DEFAULT '[]', counter_names_json TEXT NOT NULL DEFAULT '["Counter 1"]',
       default_counter TEXT NOT NULL DEFAULT 'Counter 1', invoice_terms TEXT NOT NULL DEFAULT 'Goods once sold cannot be returned without approval.',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     db.prepare("CREATE TABLE IF NOT EXISTS counters (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '',
+      entity_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at DESC)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)"),
   ]);
 
   const additions: Array<["products" | "bills" | "settings", string, string]> = [
@@ -138,7 +151,8 @@ async function ensureSchema() {
       SELECT json_extract(item.value,'$.productId') FROM json_each(OLD.items_json) item
       WHERE COALESCE(json_extract(item.value,'$.againstOrder'),0)=0
     ); END`).run();
-  await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Furniture Expo','Live Billing Desk',18,'EXP')`).run();
+  await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Smaarthome Furniture','Showroom Billing & Operations',18,'SHF')`).run();
+  await db.prepare(`UPDATE settings SET business_name='Smaarthome Furniture',subtitle='Showroom Billing & Operations',bill_prefix=CASE WHEN bill_prefix='EXP' THEN 'SHF' ELSE bill_prefix END WHERE business_name='Furniture Expo'`).run();
   await db.prepare("INSERT OR IGNORE INTO counters (key,value) VALUES ('bill',0)").run();
   const count = await db.prepare("SELECT COUNT(*) AS count FROM products").first<{ count: number }>();
   if (!count?.count) await db.batch(SAMPLE_PRODUCTS.map(productUpsertStatement));
@@ -159,7 +173,7 @@ function productUpsertStatement(input: ProductInput) {
 }
 
 async function readState() {
-  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows] = await Promise.all([
+  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows] = await Promise.all([
     env.DB.prepare(`SELECT id,code,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
       stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ORDER BY category,name`).all(),
     env.DB.prepare(`SELECT id,bill_no AS billNo,customer_name AS customerName,customer_phone AS customerPhone,
@@ -187,6 +201,8 @@ async function readState() {
       product_name AS productName,qty,supplier_id AS supplierId,purchase_cost AS purchaseCost,advance_paid AS advancePaid,
       expected_date AS expectedDate,status,notes,created_at AS createdAt,updated_at AS updatedAt
       FROM supplier_assignments ORDER BY CASE status WHEN 'Closed' THEN 1 ELSE 0 END,expected_date,created_at DESC`).all(),
+    env.DB.prepare(`SELECT id,action,entity_type AS entityType,entity_id AS entityId,summary,created_at AS createdAt
+      FROM audit_logs ORDER BY created_at DESC LIMIT 250`).all(),
   ]);
   const products = productRows.results.map((row: Record<string, unknown>) => ({ ...row, imageUrl: row.imageKey ? `/api/images/${encodeURIComponent(String(row.imageKey))}` : "" }));
   const gstRate = Number((settingRow as Record<string, unknown> | null)?.gstRate ?? 18);
@@ -231,8 +247,33 @@ async function readState() {
     tasks: taskRows.results,
     interactions: interactionRows.results,
     supplierAssignments: assignmentRows.results,
+    auditLogs: auditRows.results,
     syncedAt: new Date().toISOString(),
   };
+}
+
+function auditDescription(action: string, payload: Record<string, unknown>) {
+  const bill = (payload.bill || {}) as Record<string, unknown>;
+  const product = (payload.product || {}) as Record<string, unknown>;
+  const task = (payload.task || {}) as Record<string, unknown>;
+  const interaction = (payload.interaction || {}) as Record<string, unknown>;
+  const labels: Record<string, string> = {
+    createBill: `Order saved for ${clean(bill.customerName, "customer")}`,
+    updateBill: `Order details updated`, addPayment: `Payment recorded`, cancelBill: `Order cancelled`,
+    setDelivery: `Delivery completion changed`, setDeliveryStatus: `Delivery moved to ${clean(payload.deliveryStatus, "new status")}`,
+    saveProduct: `Product ${clean(product.code)} saved`, deleteProduct: `Product removed`, adjustStock: `Stock quantity adjusted`,
+    saveTask: `Task ${clean(task.title)} saved`, deleteTask: `Task removed`,
+    saveInteraction: `${clean(interaction.type, "Customer activity")} saved`, deleteInteraction: `Customer activity removed`,
+    saveSupplier: `Supplier saved`, deleteSupplier: `Supplier removed`, saveSupplierAssignments: `Supplier assignment updated`,
+    deleteSupplierAssignment: `Supplier assignment removed`, saveSettings: `Showroom settings updated`,
+  };
+  const entityType = action.toLowerCase().includes("bill") || action.startsWith("setDelivery") || action === "addPayment" ? "order"
+    : action.toLowerCase().includes("product") || action === "adjustStock" ? "product"
+      : action.toLowerCase().includes("task") ? "task"
+        : action.toLowerCase().includes("interaction") ? "customer"
+          : action.toLowerCase().includes("supplier") ? "supplier" : "settings";
+  const entityId = clean(payload.id) || clean(bill.id) || clean(product.id) || clean(task.id) || clean(interaction.id);
+  return { entityType, entityId, summary: labels[action] || `${action} completed` };
 }
 
 export async function GET(request: Request) {
@@ -266,7 +307,7 @@ export async function POST(request: Request) {
     } else if (action === "saveProduct") {
       const product = payload.product as ProductInput;
       if (!clean(product?.code) || !clean(product?.name) || numeric(product?.price) <= 0) {
-        return Response.json({ error: "Product code, name and expo price are required." }, { status: 400 });
+        return Response.json({ error: "Product code, name and showroom price are required." }, { status: 400 });
       }
       await productUpsertStatement(product).run();
     } else if (action === "importProducts") {
@@ -618,9 +659,9 @@ export async function POST(request: Request) {
         const counters = cleanList(importedSettings.counterNames, ["Counter 1"]);
         await env.DB.prepare(`UPDATE settings SET business_name=?,subtitle=?,gstin=?,phone=?,address=?,gst_rate=?,bill_prefix=?,
           staff_names_json=?,counter_names_json=?,default_counter=?,invoice_terms=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-          .bind(clean(importedSettings.businessName, "Furniture Expo"), clean(importedSettings.subtitle, "Live Billing Desk"),
+          .bind(clean(importedSettings.businessName, "Smaarthome Furniture"), clean(importedSettings.subtitle, "Showroom Billing & Operations"),
             clean(importedSettings.gstin), clean(importedSettings.phone), clean(importedSettings.address), round2(numeric(importedSettings.gstRate, 18)),
-            clean(importedSettings.billPrefix, "EXP"), JSON.stringify(cleanList(importedSettings.staffNames)), JSON.stringify(counters),
+            clean(importedSettings.billPrefix, "SHF"), JSON.stringify(cleanList(importedSettings.staffNames)), JSON.stringify(counters),
             clean(importedSettings.defaultCounter, counters[0] || "Counter 1"), clean(importedSettings.invoiceTerms)).run();
       }
       for (let index = 0; index < importedSuppliers.length; index += 60) {
@@ -675,16 +716,21 @@ export async function POST(request: Request) {
       const defaultCounter = clean(value.defaultCounter, counters[0] || "Counter 1");
       await env.DB.prepare(`UPDATE settings SET business_name=?,subtitle=?,gstin=?,phone=?,address=?,gst_rate=?,bill_prefix=?,
         staff_names_json=?,counter_names_json=?,default_counter=?,invoice_terms=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-        .bind(clean(value.businessName, "Furniture Expo"), clean(value.subtitle, "Live Billing Desk"), clean(value.gstin).toUpperCase(),
-          clean(value.phone), clean(value.address), round2(numeric(value.gstRate, 18)), clean(value.billPrefix, "EXP").toUpperCase(),
+        .bind(clean(value.businessName, "Smaarthome Furniture"), clean(value.subtitle, "Showroom Billing & Operations"), clean(value.gstin).toUpperCase(),
+          clean(value.phone), clean(value.address), round2(numeric(value.gstRate, 18)), clean(value.billPrefix, "SHF").toUpperCase(),
           JSON.stringify(cleanList(value.staffNames)), JSON.stringify(counters.length ? counters : ["Counter 1"]), defaultCounter,
           clean(value.invoiceTerms, "Goods once sold cannot be returned without approval.")).run();
     } else {
       return Response.json({ error: "Unknown action." }, { status: 400 });
     }
+    if (!new Set(["importLegacySnapshot", "resetDemoWorkspace"]).has(action)) {
+      const audit = auditDescription(action, payload);
+      await env.DB.prepare(`INSERT INTO audit_logs (id,action,entity_type,entity_id,summary,created_at)
+        VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(uid("audit"), action, audit.entityType, audit.entityId, audit.summary).run();
+    }
     return Response.json(await readState());
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save expo data";
+    const message = error instanceof Error ? error.message : "Unable to save showroom data";
     return Response.json({ error: message.includes("INSUFFICIENT_STOCK") ? "Stock changed at another counter. Refresh and try again." : message }, { status: 409 });
   }
 }

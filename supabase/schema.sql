@@ -1,4 +1,4 @@
--- Furniture Expo Billing: Supabase schema and server-only SQL bridge.
+-- Smaarthome Furniture Billing: Supabase schema and server-only SQL bridge.
 -- The bridge is executable only by Supabase's service_role key used by the Render server.
 
 create table if not exists public.products (
@@ -58,7 +58,7 @@ create table if not exists public.bills (
 
 create table if not exists public.settings (
   id integer primary key check (id = 1),
-  business_name text not null default 'Furniture Expo',
+  business_name text not null default 'Smaarthome Furniture',
   subtitle text not null default 'Live Billing Desk',
   gstin text not null default '',
   phone text not null default '',
@@ -139,10 +139,20 @@ create table if not exists public.supplier_assignments (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.audit_logs (
+  id text primary key,
+  action text not null,
+  entity_type text not null default '',
+  entity_id text not null default '',
+  summary text not null default '',
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_products_category on public.products(category);
 create index if not exists idx_bills_created_at on public.bills(created_at desc);
 create index if not exists idx_bills_delivery_date on public.bills(delivery_date);
 create unique index if not exists idx_bills_client_request_id on public.bills(client_request_id) where client_request_id <> '';
+create index if not exists idx_audit_logs_created_at on public.audit_logs(created_at desc);
 
 create or replace function public.furniture_bill_stock_guard()
 returns trigger language plpgsql security definer set search_path = public as $$
@@ -234,5 +244,5 @@ grant execute on function public.expo_exec(text) to service_role;
 grant execute on function public.expo_batch(jsonb) to service_role;
 
 insert into public.settings (id, business_name, subtitle, gst_rate, bill_prefix)
-values (1, 'Furniture Expo', 'Live Billing Desk', 18, 'EXP') on conflict do nothing;
+values (1, 'Smaarthome Furniture', 'Showroom Billing & Operations', 18, 'SHF') on conflict do nothing;
 insert into public.counters (key, value) values ('bill', 0) on conflict do nothing;
