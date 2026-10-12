@@ -154,6 +154,16 @@ type ReportData = {
   headers: string[];
   rows: Array<Array<string | number>>;
 };
+type DashboardAction = {
+  id: string;
+  group: "urgent" | "today" | "routine";
+  icon: string;
+  title: string;
+  detail: string;
+  action: string;
+  open: () => void;
+  perform?: () => void | Promise<unknown>;
+};
 
 const EMPTY_PRODUCT = {
   id: "",
@@ -203,6 +213,13 @@ const categories = [
   "Others",
 ];
 const paymentModes = ["CASH", "GPAY", "CARD", "RTGS", "BAJAJ", "CHEQUE"];
+const taskTemplates = [
+  { icon: "☎", category: "Follow-up", title: "Customer follow-up", details: "Call the customer and record the next action." },
+  { icon: "✦", category: "Cleaning", title: "Showroom cleaning check", details: "Check entrance, displays, products and billing counter." },
+  { icon: "◎", category: "Marketing", title: "Marketing activity", details: "Plan today’s promotion, social post or lead follow-up." },
+  { icon: "↗", category: "Development", title: "Business development", details: "Review improvement ideas, staff needs and showroom growth work." },
+  { icon: "₹", category: "Financial Commitment", title: "Payment commitment", details: "Record the payable/receivable amount and completion plan." },
+];
 const palette = ["clay", "sage", "sand", "ink", "ochre", "rose"];
 
 function money(value: number) {
@@ -383,6 +400,9 @@ export default function Home() {
   );
   const [manualScanCode, setManualScanCode] = useState("");
   const [operationsTab, setOperationsTab] = useState<"tasks" | "customers">("tasks");
+  const [taskFilter, setTaskFilter] = useState<"active" | "completed" | "all">("active");
+  const [showCompletedTasks, setShowCompletedTasks] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
   const [interactionForm, setInteractionForm] = useState<Partial<CustomerInteraction>>({ type: "Follow-up", status: "Open" });
@@ -1425,19 +1445,41 @@ export default function Home() {
   const supplierOrdersOpen = state.supplierAssignments.filter((item) => !["Received", "Closed", "Cancelled"].includes(item.status));
   const supplierOrdersDelayed = supplierOrdersOpen.filter((item) => item.expectedDate && item.expectedDate < isoDate());
   const supplierPending = state.supplierAssignments.reduce((sum, item) => sum + Math.max(0, item.purchaseCost - item.advancePaid), 0);
-  const todayActionItems = [
+  const todayActionItems: DashboardAction[] = [
     ...activeBills
       .filter((bill) => bill.deliveryStatus !== "Delivered" && bill.deliveryDate && bill.deliveryDate < isoDate())
       .map((bill) => ({ id: `delivery-${bill.id}`, group: "urgent", icon: "⇢", title: `Delayed delivery · ${bill.customerName}`, detail: `${bill.billNo} · Expected ${bill.deliveryDate}`, action: "View order", open: () => setSelectedBill(bill) })),
     ...openComplaints.map((item) => ({ id: `complaint-${item.id}`, group: "urgent", icon: "!", title: `Complaint · ${item.customerName}`, detail: item.details, action: "Resolve", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...supplierOrdersDelayed.map((item) => ({ id: `supplier-${item.id}`, group: "urgent", icon: "◇", title: `Supplier delay · ${item.productName}`, detail: `${item.billNo} · Expected ${item.expectedDate}`, action: "Update", open: () => setActive("suppliers") })),
-    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: task.priority === "High" ? "urgent" : "today", icon: "✓", title: task.title, detail: `${task.category}${task.assignedTo ? ` · ${task.assignedTo}` : ""}`, action: "Done", open: () => mutate({ action: "saveTask", task: { ...task, status: "Completed" } }, "Task completed.") })),
+    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: (["High", "Urgent"].includes(task.priority) ? "urgent" : "today") as "urgent" | "today", icon: "✓", title: task.title, detail: `${task.category}${task.assignedTo ? ` · ${task.assignedTo}` : ""}${task.dueDate ? ` · Due ${task.dueDate}` : ""}`, action: "Done", open: () => { setTaskForm(task); setShowTaskForm(true); }, perform: () => mutate({ action: "saveTask", task: { ...task, status: "Completed" } }, "Task completed. Open Completed history to view or reopen it.") })),
     ...followUpsDue.filter((item) => item.type !== "Complaint").map((item) => ({ id: `follow-${item.id}`, group: "today", icon: "☎", title: `${item.type} · ${item.customerName}`, detail: `${item.customerPhone}${item.details ? ` · ${item.details}` : ""}`, action: "Open", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...activeBills.filter((bill) => bill.deliveryStatus !== "Delivered" && bill.deliveryDate === isoDate()).map((bill) => ({ id: `today-delivery-${bill.id}`, group: "today", icon: "⇢", title: `Delivery today · ${bill.customerName}`, detail: `${bill.billNo} · ${bill.customerPhone}`, action: "View", open: () => setSelectedBill(bill) })),
     ...activeBills.filter((bill) => bill.balanceAmount > 0).map((bill) => ({ id: `balance-${bill.id}`, group: "today", icon: "₹", title: `Collect balance · ${bill.customerName}`, detail: `${bill.billNo} · ${money(bill.balanceAmount)}`, action: "Collect", open: () => setSelectedBill(bill) })),
     ...state.products.filter((product) => product.stockQty <= 2).map((product) => ({ id: `stock-${product.id}`, group: "routine", icon: "▦", title: `Low stock · ${product.name}`, detail: `${product.code} · ${product.stockQty > 0 ? `${product.stockQty} remaining` : "Out of stock"}`, action: "Stock", open: () => { setSearch(product.code); setStockFilter("all"); setActive("products"); } })),
   ];
   const completedToday = state.tasks.filter((task) => task.status === "Completed" && task.updatedAt?.slice(0, 10) === isoDate()).length;
+  const completedTasks = state.tasks
+    .filter((task) => task.status === "Completed")
+    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  const visibleTasks = state.tasks.filter((task) =>
+    taskFilter === "all" || (taskFilter === "completed" ? task.status === "Completed" : task.status !== "Completed"),
+  );
+  const currentMonth = isoDate().slice(0, 7);
+  const staffPerformance = [...activeBills
+    .filter((bill) => bill.createdAt.slice(0, 7) === currentMonth)
+    .reduce((map, bill) => {
+      const staff = bill.staffName || "Unassigned";
+      const row = map.get(staff) || { staff, orders: 0, items: 0, sales: 0, collected: 0, balance: 0, delivered: 0 };
+      row.orders += 1;
+      row.items += bill.items.reduce((sum, item) => sum + item.qty, 0);
+      row.sales += bill.grandTotal;
+      row.collected += bill.paidAmount;
+      row.balance += bill.balanceAmount;
+      if (bill.deliveryStatus === "Delivered") row.delivered += 1;
+      map.set(staff, row);
+      return map;
+    }, new Map<string, { staff: string; orders: number; items: number; sales: number; collected: number; balance: number; delivered: number }>())
+    .values()].sort((a, b) => b.sales - a.sales);
 
   if (authStatus === "checking") {
     return <div className="login-shell"><div className="login-loading"><span>FE</span><strong>Furniture Expo</strong><small>Opening secure billing desk…</small></div></div>;
@@ -1477,7 +1519,7 @@ export default function Home() {
             active={active === "dashboard"}
             onClick={() => setActive("dashboard")}
             icon="⌂"
-            label="Today Desk"
+            label="Dashboard"
           />
           <Nav
             active={active === "billing"}
@@ -1553,7 +1595,7 @@ export default function Home() {
             active={active === "dashboard"}
             onClick={() => setActive("dashboard")}
             icon="⌂"
-            label="Today"
+            label="Dashboard"
           />
           <Nav
             active={active === "billing"}
@@ -1573,35 +1615,29 @@ export default function Home() {
             icon="≡"
             label="Orders"
           />
-          <Nav
-            active={active === "deliveries"}
-            onClick={() => setActive("deliveries")}
-            icon="⇢"
-            label="Delivery"
-          />
-          <Nav active={active === "operations"} onClick={() => setActive("operations")} icon="✓" label="Tasks" />
-          <Nav active={active === "suppliers"} onClick={() => setActive("suppliers")} icon="◇" label="Supply" />
-          <Nav
-            active={active === "reports"}
-            onClick={() => setActive("reports")}
-            icon="▤"
-            label="Reports"
-          />
-          <Nav
-            active={active === "settings"}
-            onClick={() => setActive("settings")}
-            icon="⚙"
-            label="Setup"
-          />
+          <Nav active={["deliveries", "operations", "suppliers", "reports", "settings"].includes(active)} onClick={() => setMobileMoreOpen(true)} icon="•••" label="More" />
         </div>
+        {mobileMoreOpen && <div className="mobile-more-backdrop">
+          <button className="mobile-more-dismiss" aria-label="Close more tools" onClick={() => setMobileMoreOpen(false)} />
+          <div className="mobile-more-sheet">
+            <div className="mobile-more-head"><div><span className="eyebrow">More tools</span><h2>Manage showroom</h2></div><button onClick={() => setMobileMoreOpen(false)}>×</button></div>
+            {([
+              ["deliveries", "⇢", "Deliveries", "Expected dates and order status"],
+              ["operations", "✓", "Tasks & customers", "Schedules, follow-ups and completed history"],
+              ["suppliers", "◇", "Suppliers", "Purchases and supplier assignments"],
+              ["reports", "▤", "Reports", "Sales, staff work and downloadable reports"],
+              ["settings", "⚙", "Settings", "Business, GST and staff setup"],
+            ] as const).map(([page, icon, label, note]) => <button key={page} onClick={() => { setActive(page); setMobileMoreOpen(false); }}><span>{icon}</span><div><strong>{label}</strong><small>{note}</small></div><b>›</b></button>)}
+          </div>
+        </div>}
 
         {active === "dashboard" && (
           <section className="page-section dashboard-page">
             <div className="section-heading today-heading">
               <div>
-                <span className="eyebrow">Today desk · {new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</span>
-                <h1>Good morning. What should we finish today?</h1>
-                <p>Orders, collections, follow-ups and showroom work—sorted by urgency.</p>
+                <span className="eyebrow">Dashboard · {new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</span>
+                <h1>Your showroom, clearly organised.</h1>
+                <p>Today’s priorities, completed work, collections, deliveries and staff performance in one view.</p>
               </div>
               <div className="heading-actions">
                 <button className="secondary-action" onClick={() => { setTaskForm({ category: "General", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
@@ -1612,6 +1648,19 @@ export default function Home() {
               <div className="today-count"><strong>{todayActionItems.length}</strong><span>actions pending</span><small>{completedToday} completed today</small></div>
               <div className="today-summary"><span><b>{money(todaySales)}</b>Today sales</span><span><b>{money(pendingAmount)}</b>To collect</span><span><b>{deliveryCounts.today}</b>Today deliveries</span><span><b>{totalStock}</b>Ready stock</span></div>
             </div>
+            <section className="quick-plan">
+              <div className="quick-plan-copy">
+                <span className="eyebrow">Quick plan</span>
+                <h2>Add today’s work in one tap</h2>
+                <p>Choose a common showroom activity. You can assign staff and edit the details before saving.</p>
+              </div>
+              <div className="quick-plan-actions">
+                {taskTemplates.map((template) => <button key={template.category} onClick={() => {
+                  setTaskForm({ category: template.category, title: template.title, details: template.details, priority: "Normal", status: "Pending", dueDate: isoDate() });
+                  setShowTaskForm(true);
+                }}><span>{template.icon}</span><strong>{template.title}</strong><small>{template.category}</small></button>)}
+              </div>
+            </section>
             <article className="today-planner">
               {([
                 ["urgent", "Urgent", "No urgent issues. Everything is under control."],
@@ -1625,13 +1674,27 @@ export default function Home() {
                     {rows.slice(0, group === "routine" ? 5 : 8).map((item) => <div className="today-item" key={item.id}>
                       <span className="today-icon">{item.icon}</span>
                       <button className="today-copy" onClick={item.open}><strong>{item.title}</strong><small>{item.detail}</small></button>
-                      <button className="today-action" onClick={item.open}>{item.action} →</button>
+                      <button className="today-action" onClick={() => (item.perform || item.open)()}>{item.action} →</button>
                     </div>)}
                     {!rows.length && <div className="today-empty">✓ {empty}</div>}
                   </div>
                 </section>;
               })}
-              <footer><button onClick={() => { setOperationsTab("tasks"); setActive("operations"); }}>Manage all tasks</button><button onClick={() => { setOperationsTab("customers"); setActive("operations"); }}>Customer follow-ups</button></footer>
+              <section className={`completed-panel ${showCompletedTasks ? "open" : ""}`}>
+                <button className="completed-toggle" onClick={() => setShowCompletedTasks((value) => !value)}>
+                  <span><b>✓</b><strong>Completed history</strong><small>{completedTasks.length} saved · nothing is lost</small></span>
+                  <em>{showCompletedTasks ? "Hide" : "View"} history</em>
+                </button>
+                {showCompletedTasks && <div className="completed-list">
+                  {completedTasks.slice(0, 8).map((task) => <div className="completed-row" key={task.id}>
+                    <span>✓</span>
+                    <div><strong>{task.title}</strong><small>{task.category}{task.assignedTo ? ` · ${task.assignedTo}` : ""}{task.updatedAt ? ` · ${shortDate(task.updatedAt)}` : ""}</small></div>
+                    <button onClick={() => mutate({ action: "saveTask", task: { ...task, status: "Pending" } }, "Task reopened and moved back to the active list.")}>Reopen</button>
+                  </div>)}
+                  {!completedTasks.length && <div className="today-empty">Completed tasks will stay safely visible here.</div>}
+                </div>}
+              </section>
+              <footer><button onClick={() => { setOperationsTab("tasks"); setTaskFilter("active"); setActive("operations"); }}>Manage active tasks</button><button onClick={() => { setOperationsTab("tasks"); setTaskFilter("completed"); setActive("operations"); }}>Full completed history</button><button onClick={() => { setOperationsTab("customers"); setActive("operations"); }}>Customer follow-ups</button></footer>
             </article>
             <div className="dashboard-grid">
               <article className="dashboard-card">
@@ -1715,6 +1778,23 @@ export default function Home() {
                 </div>
               </article>
             </div>
+            <article className="staff-performance dashboard-card">
+              <div className="card-heading">
+                <div><span className="eyebrow">Monthly team observation · {new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</span><h2>Order booking staff performance</h2><p>Orders, products, sales, collection and delivery progress for this month.</p></div>
+                <button onClick={() => { setReportType("staff"); setReportFrom(`${currentMonth}-01`); setReportTo(isoDate()); setActive("reports"); }}>Open full report →</button>
+              </div>
+              <div className="staff-performance-list">
+                {staffPerformance.slice(0, 6).map((row, index) => <div className="staff-performance-row" key={row.staff}>
+                  <span className="staff-rank">{index + 1}</span>
+                  <div className="staff-name"><strong>{row.staff}</strong><small>{row.orders} orders · {row.items} products</small></div>
+                  <span><b>{money(row.sales)}</b><small>Booked</small></span>
+                  <span><b>{money(row.collected)}</b><small>Collected</small></span>
+                  <span className={row.balance > 0 ? "needs-attention" : ""}><b>{money(row.balance)}</b><small>Balance</small></span>
+                  <span><b>{row.delivered}/{row.orders}</b><small>Delivered</small></span>
+                </div>)}
+                {!staffPerformance.length && <div className="empty-mini">This month’s staff performance will appear after the first saved order.</div>}
+              </div>
+            </article>
           </section>
         )}
 
@@ -1817,10 +1897,10 @@ export default function Home() {
                     <div className="cart-item-main">
                       <div className="cart-item-head">
                         <strong>{item.name}</strong>
-                        <button onClick={() => removeCart(index)}>×</button>
+                        <button className="remove-cart-line" onClick={() => removeCart(index)} aria-label={`Remove ${item.name}`}>Remove</button>
                       </div>
                       <small>
-                        {item.code} · Ready stock {item.stockQty}
+                        {item.code} · Size {item.size || "—"} · Ready stock {item.stockQty}
                       </small>
                       <div className="cart-controls">
                         <div className="stepper">
@@ -2118,6 +2198,7 @@ export default function Home() {
                 {busy ? "Syncing…" : "Save order slip"}
                 <span>→</span>
               </button>
+              <p className="order-number-note">Order number is automatic, unique and continues from the last saved order.</p>
               <p className="stock-note">
                 Atomic stock check prevents the same last piece being sold
                 twice.
@@ -2305,8 +2386,8 @@ export default function Home() {
           <section className="page-section">
             <div className="section-heading with-actions">
               <div>
-                <span className="eyebrow">Sales history</span>
-                <h1>Bills, payments & balance.</h1>
+                <span className="eyebrow">Order history</span>
+                <h1>Orders, payments & balances.</h1>
                 <p>View, update, print, export, share or cancel every order.</p>
               </div>
               <button
@@ -2344,11 +2425,11 @@ export default function Home() {
                 <input
                   value={billSearch}
                   onChange={(event) => setBillSearch(event.target.value)}
-                  placeholder="Bill no, customer, phone, staff or counter…"
+                  placeholder="Order no, customer, phone, staff or counter…"
                 />
               </label>
               <button className="text-button" onClick={() => load()}>
-                ↻ Sync bills
+                ↻ Sync orders
               </button>
             </div>
             <div className="bill-list">
@@ -2370,6 +2451,7 @@ export default function Home() {
                       <small>
                         {bill.customerPhone} · {bill.staffName || "No staff"}
                       </small>
+                      <small className="bill-product-summary">{bill.items.slice(0, 2).map((item) => `${item.name}${item.size ? ` (${item.size})` : ""}`).join(" · ")}{bill.items.length > 2 ? ` · +${bill.items.length - 2} more` : ""}</small>
                     </div>
                     <div>
                       <span
@@ -2514,7 +2596,7 @@ export default function Home() {
         {active === "operations" && (
           <section className="page-section operations-page">
             <div className="section-heading with-actions">
-              <div><span className="eyebrow">Daily operations</span><h1>Tasks, customers and commitments.</h1><p>Follow-ups, cleaning, marketing, recruitment, complaints and service work in one place.</p></div>
+              <div><span className="eyebrow">Task centre</span><h1>Plan work. Finish it. Keep the history.</h1><p>Follow-ups, cleaning, marketing, development, commitments, complaints and service work in one simple place.</p></div>
               <div className="heading-actions">
                 <button className="secondary-action" onClick={() => { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
                 <button className="primary-small" onClick={() => { setInteractionForm({ type: "Follow-up", status: "Open", nextFollowUp: isoDate() }); setShowInteractionForm(true); }}>＋ Customer activity</button>
@@ -2531,13 +2613,17 @@ export default function Home() {
               <button className={operationsTab === "customers" ? "active" : ""} onClick={() => setOperationsTab("customers")}>Customer follow-up & service</button>
             </div>
             {operationsTab === "tasks" ? (
-              <div className="table-wrap"><table><thead><tr><th>Task</th><th>Category</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
-                {state.tasks.map((task) => <tr key={task.id} className={task.status !== "Completed" && task.dueDate && task.dueDate < isoDate() ? "overdue-row" : ""}>
+              <><div className="task-filter" role="group" aria-label="Task history filter">
+                <button className={taskFilter === "active" ? "active" : ""} onClick={() => setTaskFilter("active")}>Active <span>{openTasks.length}</span></button>
+                <button className={taskFilter === "completed" ? "active" : ""} onClick={() => setTaskFilter("completed")}>Completed <span>{completedTasks.length}</span></button>
+                <button className={taskFilter === "all" ? "active" : ""} onClick={() => setTaskFilter("all")}>All <span>{state.tasks.length}</span></button>
+              </div><div className="table-wrap"><table><thead><tr><th>Task</th><th>Category</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
+                {visibleTasks.map((task) => <tr key={task.id} className={task.status !== "Completed" && task.dueDate && task.dueDate < isoDate() ? "overdue-row" : ""}>
                   <td><strong>{task.title}</strong><small className="block-muted">{task.details || "No details"}</small></td><td>{task.category}</td><td>{task.assignedTo || "—"}</td><td>{task.dueDate || "Not set"}</td><td><span className={`priority ${task.priority.toLowerCase()}`}>{task.priority}</span></td><td>{task.status}</td>
                   <td><div className="row-actions"><button onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "Reopen" : "Done"}</button><button onClick={() => { setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></div></td>
                 </tr>)}
-                {!state.tasks.length && <tr><td colSpan={7} className="empty-table">No tasks yet. Add your first follow-up or schedule.</td></tr>}
-              </tbody></table></div>
+                {!visibleTasks.length && <tr><td colSpan={7} className="empty-table">{taskFilter === "completed" ? "No completed tasks yet. Finished work will remain here." : taskFilter === "active" ? "No active tasks. Add a showroom activity or reopen one from Completed." : "No tasks yet. Add your first showroom activity."}</td></tr>}
+              </tbody></table></div></>
             ) : (
               <div className="table-wrap"><table><thead><tr><th>Customer</th><th>Type</th><th>Details</th><th>Assigned</th><th>Next follow-up</th><th>Status</th><th /></tr></thead><tbody>
                 {state.interactions.map((item) => { const priorBills = activeBills.filter((bill) => normalizePhone(bill.customerPhone) === normalizePhone(item.customerPhone)); return <tr key={item.id} className={item.status !== "Closed" && item.nextFollowUp && item.nextFollowUp < isoDate() ? "overdue-row" : ""}>
@@ -2652,7 +2738,7 @@ export default function Home() {
                 ["delivery", "Delivery"],
                 ["payment", "Payment Pending"],
                 ["stock", "Stock"],
-                ["staff", "Staff / Counter"],
+                ["staff", "Staff Performance"],
                 ["against", "Against Order"],
                 ["supplier", "Suppliers"],
                 ["tasks", "Tasks"],
@@ -3139,7 +3225,7 @@ export default function Home() {
                   <div>
                     <strong>{item.name}</strong>
                     <small>
-                      {item.code} ·{" "}
+                      {item.code} · Size {item.size || "—"} · Unit {money(item.price)} ·{" "}
                       {item.againstOrder ? "Against Order" : "Stock"}
                       {item.customizeDetails
                         ? ` · ${item.customizeDetails}`
@@ -3155,6 +3241,11 @@ export default function Home() {
                         Number(item.againstOrderExtra || 0),
                     )}
                   </strong>
+                  {selectedBill.status !== "cancelled" && selectedBill.items.length > 1 && <button className="remove-line" onClick={async () => {
+                    if (!window.confirm(`Remove ${item.name} from ${selectedBill.billNo}? Stock and totals will be corrected automatically.`)) return;
+                    const data = await mutate({ action: "removeBillItem", id: selectedBill.id, itemIndex: index }, `${item.name} removed. Stock and totals updated.`);
+                    if (data) setSelectedBill(data.bills.find((bill) => bill.id === selectedBill.id) || null);
+                  }}>Remove</button>}
                 </div>
               ))}
             </div>
@@ -3334,7 +3425,7 @@ export default function Home() {
                   onClick={async () => {
                     if (
                       !window.confirm(
-                        "Cancel this bill and restore ready stock?",
+                        "Cancel this order and restore all ready stock?",
                       )
                     )
                       return;
@@ -3350,7 +3441,7 @@ export default function Home() {
                       );
                   }}
                 >
-                  Cancel bill
+                  Cancel order
                 </button>
               )}
             </div>
@@ -3507,7 +3598,7 @@ export default function Home() {
         <div className="modal-backdrop"><form className="modal-card" onSubmit={saveTask}>
           <div className="modal-head"><div><span className="eyebrow">Task & schedule</span><h2>{taskForm.id ? "Edit task" : "Add task"}</h2></div><button type="button" onClick={() => setShowTaskForm(false)}>×</button></div>
           <div className="form-grid">
-            <label>Category<select value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Recruitment", "Financial", "Delivery", "General"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Category<select value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Development", "Recruitment", "Financial Commitment", "Financial", "Delivery", "Complaint", "General"].map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Priority<select value={taskForm.priority || "Normal"} onChange={(event) => setTaskForm({ ...taskForm, priority: event.target.value })}><option>Low</option><option>Normal</option><option>High</option><option>Urgent</option></select></label>
             <label className="wide">Task title<input value={taskForm.title || ""} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} required /></label>
             <label className="wide">Details<textarea rows={3} value={taskForm.details || ""} onChange={(event) => setTaskForm({ ...taskForm, details: event.target.value })} /></label>
@@ -3526,7 +3617,7 @@ export default function Home() {
           <div className="form-grid">
             <label>Customer name<input value={interactionForm.customerName || ""} onChange={(event) => setInteractionForm({ ...interactionForm, customerName: event.target.value })} required /></label>
             <label>Phone<input value={interactionForm.customerPhone || ""} onChange={(event) => { const phone = event.target.value; const prior = activeBills.find((bill) => normalizePhone(bill.customerPhone) === normalizePhone(phone)); setInteractionForm({ ...interactionForm, customerPhone: phone, customerName: interactionForm.customerName || prior?.customerName || "", billId: interactionForm.billId || prior?.id || "" }); }} required /></label>
-            <label>Activity type<select value={interactionForm.type || "Follow-up"} onChange={(event) => setInteractionForm({ ...interactionForm, type: event.target.value })}>{["Enquiry", "Follow-up", "Order Follow-up", "Complaint", "Service Call"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Activity type<select value={interactionForm.type || "Follow-up"} onChange={(event) => setInteractionForm({ ...interactionForm, type: event.target.value })}>{["Enquiry", "Follow-up", "Order Follow-up", "Happy Call", "Complaint", "Service Call", "New Service"].map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Next follow-up<input type="date" value={interactionForm.nextFollowUp || ""} onChange={(event) => setInteractionForm({ ...interactionForm, nextFollowUp: event.target.value })} /></label>
             <label>Assigned staff<input list="crm-staff" value={interactionForm.assignedTo || ""} onChange={(event) => setInteractionForm({ ...interactionForm, assignedTo: event.target.value })} /><datalist id="crm-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
             <label>Status<select value={interactionForm.status || "Open"} onChange={(event) => setInteractionForm({ ...interactionForm, status: event.target.value })}><option>Open</option><option>In progress</option><option>Closed</option></select></label>
@@ -3720,7 +3811,7 @@ function buildReport(
           money(payments.reduce((sum, payment) => sum + payment.amount, 0)),
         ],
         ["Cash", money(modes.CASH || 0)],
-        ["UPI", money(modes.UPI || 0)],
+        ["GPAY", money(modes.GPAY || 0)],
         ["Card", money(modes.CARD || 0)],
       ],
       headers: [
@@ -3915,38 +4006,43 @@ function buildReport(
       string,
       {
         staff: string;
-        counter: string;
-        bills: number;
+        counters: Set<string>;
+        orders: number;
+        items: number;
         sales: number;
-        paid: number;
+        collected: number;
         balance: number;
         against: number;
+        delivered: number;
       }
     >();
     selected.forEach((bill) => {
-      const staff = bill.staffName || "Unassigned",
-        counter = bill.counterName || "Unassigned",
-        key = `${staff}||${counter}`,
-        row = map.get(key) || {
+      const staff = bill.staffName || "Unassigned";
+      const row = map.get(staff) || {
           staff,
-          counter,
-          bills: 0,
+          counters: new Set<string>(),
+          orders: 0,
+          items: 0,
           sales: 0,
-          paid: 0,
+          collected: 0,
           balance: 0,
           against: 0,
+          delivered: 0,
         };
-      row.bills++;
+      row.counters.add(bill.counterName || "Unassigned");
+      row.orders++;
+      row.items += bill.items.reduce((sum, item) => sum + item.qty, 0);
       row.sales += bill.grandTotal;
-      row.paid += bill.paidAmount;
+      row.collected += bill.paidAmount;
       row.balance += bill.balanceAmount;
       if (bill.items.some((item) => item.againstOrder)) row.against++;
-      map.set(key, row);
+      if (bill.deliveryStatus === "Delivered") row.delivered++;
+      map.set(staff, row);
     });
     const rows = [...map.values()].sort((a, b) => b.sales - a.sales);
     return {
-      title: "Staff / Counter Report",
-      subtitle: dateLabel,
+      title: "Order Booking Staff Performance",
+      subtitle: `${dateLabel} · Monthly observation-ready`,
       summary: [
         [
           "Staff",
@@ -3956,13 +4052,12 @@ function buildReport(
           ),
         ],
         [
-          "Counters",
+          "Products booked",
           String(
-            new Set(selected.map((bill) => bill.counterName || "Unassigned"))
-              .size,
+            selected.reduce((sum, bill) => sum + bill.items.reduce((itemSum, item) => itemSum + item.qty, 0), 0),
           ),
         ],
-        ["Bills", String(selected.length)],
+        ["Orders", String(selected.length)],
         [
           "Sales",
           money(selected.reduce((sum, bill) => sum + bill.grandTotal, 0)),
@@ -3970,23 +4065,27 @@ function buildReport(
       ],
       headers: [
         "Staff",
-        "Counter",
-        "Bills",
+        "Counters Used",
+        "Orders",
+        "Products",
         "Sales",
-        "Paid",
+        "Collected",
         "Balance",
-        "Against Bills",
-        "Average Bill",
+        "Delivered",
+        "Against Orders",
+        "Average Order",
       ],
       rows: rows.map((row) => [
         row.staff,
-        row.counter,
-        row.bills,
+        [...row.counters].join(", "),
+        row.orders,
+        row.items,
         row.sales,
-        row.paid,
+        row.collected,
         row.balance,
+        `${row.delivered}/${row.orders}`,
         row.against,
-        row.bills ? row.sales / row.bills : 0,
+        row.orders ? row.sales / row.orders : 0,
       ]),
     };
   }
@@ -4117,7 +4216,7 @@ function buildReport(
     };
   }
   if (type === "followup" || type === "complaints") {
-    const accepted = type === "complaints" ? ["Complaint", "Service Call"] : ["Enquiry", "Follow-up", "Order Follow-up"];
+    const accepted = type === "complaints" ? ["Complaint", "Service Call", "New Service"] : ["Enquiry", "Follow-up", "Order Follow-up", "Happy Call"];
     const rows = interactions.filter((item) => accepted.includes(item.type) && (!from || (item.nextFollowUp || item.createdAt.slice(0, 10)) >= from) && (!to || (item.nextFollowUp || item.createdAt.slice(0, 10)) <= to));
     return {
       title: type === "complaints" ? "Complaints & Service Report" : "Customer Follow-up Report", subtitle: dateLabel,
@@ -4149,7 +4248,7 @@ function buildReport(
         money(selected.reduce((sum, bill) => sum + bill.balanceAmount, 0)),
       ],
       ["Cash", money(modeTotal("CASH"))],
-      ["UPI", money(modeTotal("UPI"))],
+      ["GPAY", money(modeTotal("GPAY"))],
       ["Card", money(modeTotal("CARD"))],
     ],
     headers: [

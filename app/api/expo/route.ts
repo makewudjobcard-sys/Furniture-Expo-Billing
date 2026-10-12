@@ -374,6 +374,52 @@ export async function POST(request: Request) {
       const paid = round2(Number(bill.paidAmount) + amount);
       await env.DB.prepare("UPDATE bills SET paid_amount=?,balance_amount=?,payment_history_json=? WHERE id=?")
         .bind(paid, round2(Number(bill.grandTotal) - paid), JSON.stringify(history), id).run();
+    } else if (action === "removeBillItem") {
+      const id = clean(payload.id);
+      const itemIndex = Math.trunc(numeric(payload.itemIndex, -1));
+      const bill = await env.DB.prepare(`SELECT bill_no AS billNo,items_json AS itemsJson,status,discount_type AS discountType,
+        discount_value AS discountValue,card_charge AS cardCharge,transport_charge AS transportCharge,
+        other_charge AS otherCharge,paid_amount AS paidAmount FROM bills WHERE id=?`).bind(id).first<Record<string, unknown>>();
+      if (!bill || bill.status === "cancelled") return Response.json({ error: "Cancelled or missing order cannot be edited." }, { status: 400 });
+      const items = safeJson<BillItemInput[]>(bill.itemsJson, []);
+      if (items.length <= 1) return Response.json({ error: "An order must keep at least one product. Cancel the order if it is fully incorrect." }, { status: 400 });
+      if (itemIndex < 0 || itemIndex >= items.length) return Response.json({ error: "Choose a valid product to remove." }, { status: 400 });
+      const removed = items[itemIndex];
+      const remaining = items.filter((_, index) => index !== itemIndex);
+      const productTotal = round2(remaining.reduce((sum, item) => sum + numeric(item.price) * Math.max(1, whole(item.qty, 1)), 0));
+      const againstOrderExtra = round2(remaining.reduce((sum, item) => sum + (item.againstOrder ? numeric(item.againstOrderExtra) : 0), 0));
+      const subtotal = round2(productTotal + againstOrderExtra);
+      const discountType = clean(bill.discountType, "amount") === "percent" ? "percent" : "amount";
+      const discountValue = numeric(bill.discountValue);
+      const discount = round2(discountType === "percent" ? subtotal * Math.min(100, discountValue) / 100 : Math.min(subtotal, discountValue));
+      const goodsTotal = round2(Math.max(0, subtotal - discount));
+      const cardCharge = round2(numeric(bill.cardCharge));
+      const transportCharge = round2(numeric(bill.transportCharge));
+      const otherCharge = round2(numeric(bill.otherCharge));
+      const grandTotal = round2(goodsTotal + cardCharge + transportCharge + otherCharge);
+      const paidAmount = round2(numeric(bill.paidAmount));
+      if (paidAmount > grandTotal) return Response.json({ error: "This product cannot be removed because collected payment exceeds the new total. Record the refund first." }, { status: 400 });
+      const setting = await env.DB.prepare("SELECT gst_rate AS gstRate FROM settings WHERE id=1").first<{ gstRate: number }>();
+      const gstRate = Math.max(0, Number(setting?.gstRate ?? 18));
+      const taxableValue = gstRate > 0 ? round2(goodsTotal / (1 + gstRate / 100)) : goodsTotal;
+      const gst = round2(goodsTotal - taxableValue);
+      const cgst = round2(gst / 2);
+      const sgst = round2(gst - cgst);
+      const balanceAmount = round2(grandTotal - paidAmount);
+      const statements = [];
+      if (!removed.againstOrder && clean(removed.productId)) statements.push(env.DB.prepare(
+        "UPDATE products SET stock_qty=stock_qty+?,updated_at=CURRENT_TIMESTAMP WHERE id=?"
+      ).bind(Math.max(1, whole(removed.qty, 1)), clean(removed.productId)));
+      statements.push(env.DB.prepare(`UPDATE bills SET items_json=?,product_total=?,against_order_extra=?,subtotal=?,discount=?,
+        taxable_value=?,cgst=?,sgst=?,gst=?,grand_total=?,balance_amount=? WHERE id=?`)
+        .bind(JSON.stringify(remaining), productTotal, againstOrderExtra, subtotal, discount, taxableValue, cgst, sgst, gst, grandTotal, balanceAmount, id));
+      if (!remaining.some((item) => clean(item.productId) === clean(removed.productId) && item.againstOrder)) {
+        statements.push(env.DB.prepare("DELETE FROM supplier_assignments WHERE bill_id=? AND product_id=?").bind(id, clean(removed.productId)));
+      }
+      statements.push(env.DB.prepare(`UPDATE tasks SET title=?,status=?,updated_at=CURRENT_TIMESTAMP
+        WHERE linked_bill_id=? AND category='Financial'`)
+        .bind(`Collect ${moneyForTask(balanceAmount)} balance · ${clean(bill.billNo)}`, balanceAmount > 0 ? "Pending" : "Completed", id));
+      await env.DB.batch(statements);
     } else if (action === "updateBillDetails") {
       const value = payload.bill as Record<string, unknown>;
       if (!clean(value.customerName) || !clean(value.customerPhone)) return Response.json({ error: "Customer name and phone are required." }, { status: 400 });
