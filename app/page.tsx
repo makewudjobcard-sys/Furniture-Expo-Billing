@@ -1670,6 +1670,7 @@ export default function Home() {
           </div>
         </div>
         <nav aria-label="Main navigation">
+          <span className="nav-section-label">Billing workspace</span>
           <Nav
             active={active === "dashboard"}
             onClick={() => setActive("dashboard")}
@@ -1694,8 +1695,7 @@ export default function Home() {
             icon="≡"
             label="Orders"
           />
-          <details className="nav-more" open={["deliveries", "operations", "suppliers", "reports", "settings"].includes(active)}>
-            <summary>••• More / Admin</summary>
+          <span className="nav-section-label nav-section-spaced">Showroom management</span>
           <Nav
             active={active === "deliveries"}
             onClick={() => setActive("deliveries")}
@@ -1716,7 +1716,6 @@ export default function Home() {
             icon="⚙"
             label="Settings"
           />
-          </details>
         </nav>
         <label className="sidebar-theme">Theme<select value={theme} onChange={(event) => changeTheme(event.target.value as ThemeName)}>{themes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         <label className="sidebar-theme sidebar-density">Display<select value={density} onChange={(event) => changeDensity(event.target.value as DensityName)}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>

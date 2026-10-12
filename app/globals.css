@@ -984,6 +984,48 @@ input,select,textarea { padding:12px 14px; border-radius:12px; font-size:14px; }
 .wizard-step-2 .cart-scroll-area { overflow-y:auto; }
 .mobile-bill-bar,.mobile-summary-backdrop,.mobile-summary-close { display:none; }
 
+/* Keep every showroom module visible in the desktop navigation. */
+@media (min-width:901px) {
+  .sidebar {
+    width:278px;
+    padding:22px 18px;
+    overflow-x:hidden;
+    overflow-y:auto;
+    scrollbar-width:thin;
+    scrollbar-color:rgba(255,255,255,.25) transparent;
+  }
+  .sidebar::-webkit-scrollbar { width:6px; }
+  .sidebar::-webkit-scrollbar-thumb { border-radius:999px; background:rgba(255,255,255,.22); }
+  .main-content { margin-left:278px; }
+  .brand-mark { align-items:flex-start; }
+  .brand-mark strong {
+    white-space:normal;
+    overflow:visible;
+    text-overflow:clip;
+    line-height:1.2;
+  }
+  .sidebar nav {
+    flex:0 0 auto;
+    margin-top:22px;
+    gap:4px;
+    overflow:visible;
+  }
+  .sidebar nav button { width:100%; min-height:46px; padding:9px 12px; }
+  .nav-section-label {
+    display:block;
+    padding:0 12px 6px;
+    color:#bca99a;
+    font-size:10px;
+    font-weight:800;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+  }
+  .nav-section-spaced { margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,.11); }
+  .sidebar-theme { flex:0 0 auto; }
+  .sync-card { flex:0 0 auto; margin-top:16px; }
+  .sidebar-logout { flex:0 0 auto; min-height:44px; }
+}
+
 :root[data-density="compact"] .section-heading h1 { font-size:clamp(30px,2.8vw,44px); }
 :root[data-density="compact"] .metric-card,:root[data-density="compact"] .dashboard-card,:root[data-density="compact"] .settings-card { padding:20px; }
 :root[data-density="compact"] .form-section { gap:24px; padding:22px 0; }
