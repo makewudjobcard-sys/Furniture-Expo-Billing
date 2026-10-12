@@ -574,6 +574,10 @@ export async function POST(request: Request) {
       const snapshot = payload.snapshot as Record<string, unknown>;
       const products = Array.isArray(snapshot?.products) ? snapshot.products as ProductInput[] : [];
       const bills = Array.isArray(snapshot?.bills) ? snapshot.bills as Array<Record<string, unknown>> : [];
+      const importedSuppliers = Array.isArray(snapshot?.suppliers) ? snapshot.suppliers as Array<Record<string, unknown>> : [];
+      const importedTasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks as Array<Record<string, unknown>> : [];
+      const importedInteractions = Array.isArray(snapshot?.interactions) ? snapshot.interactions as Array<Record<string, unknown>> : [];
+      const importedAssignments = Array.isArray(snapshot?.supplierAssignments) ? snapshot.supplierAssignments as Array<Record<string, unknown>> : [];
       const importedSettings = snapshot?.settings as Record<string, unknown> | undefined;
       const snapshotBillKeys = new Set(bills.flatMap((bill) => [clean(bill.id), clean(bill.billNo)]).filter(Boolean));
       const existingBillRows = await env.DB.prepare("SELECT id,bill_no AS billNo FROM bills").all<{ id: string; billNo: string }>();
@@ -618,6 +622,50 @@ export async function POST(request: Request) {
             clean(importedSettings.gstin), clean(importedSettings.phone), clean(importedSettings.address), round2(numeric(importedSettings.gstRate, 18)),
             clean(importedSettings.billPrefix, "EXP"), JSON.stringify(cleanList(importedSettings.staffNames)), JSON.stringify(counters),
             clean(importedSettings.defaultCounter, counters[0] || "Counter 1"), clean(importedSettings.invoiceTerms)).run();
+      }
+      for (let index = 0; index < importedSuppliers.length; index += 60) {
+        await env.DB.batch(importedSuppliers.slice(index, index + 60).map((value) => env.DB.prepare(`INSERT INTO suppliers
+          (id,name,contact_person,phone,gstin,address,categories,bank_details,notes,status,created_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,contact_person=excluded.contact_person,
+          phone=excluded.phone,gstin=excluded.gstin,address=excluded.address,categories=excluded.categories,
+          bank_details=excluded.bank_details,notes=excluded.notes,status=excluded.status,updated_at=excluded.updated_at`)
+          .bind(clean(value.id) || uid("supplier"), clean(value.name), clean(value.contactPerson), clean(value.phone), clean(value.gstin),
+            clean(value.address), clean(value.categories), clean(value.bankDetails), clean(value.notes), clean(value.status, "Active"),
+            clean(value.createdAt, new Date().toISOString()), clean(value.updatedAt, new Date().toISOString()))));
+      }
+      for (let index = 0; index < importedTasks.length; index += 60) {
+        await env.DB.batch(importedTasks.slice(index, index + 60).map((value) => env.DB.prepare(`INSERT INTO tasks
+          (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,created_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET category=excluded.category,title=excluded.title,
+          details=excluded.details,assigned_to=excluded.assigned_to,due_date=excluded.due_date,priority=excluded.priority,
+          status=excluded.status,linked_bill_id=excluded.linked_bill_id,linked_customer_phone=excluded.linked_customer_phone,
+          updated_at=excluded.updated_at`)
+          .bind(clean(value.id) || uid("task"), clean(value.category, "General"), clean(value.title), clean(value.details),
+            clean(value.assignedTo), clean(value.dueDate), clean(value.priority, "Normal"), clean(value.status, "Pending"),
+            clean(value.linkedBillId), clean(value.linkedCustomerPhone), clean(value.createdAt, new Date().toISOString()),
+            clean(value.updatedAt, new Date().toISOString()))));
+      }
+      for (let index = 0; index < importedInteractions.length; index += 60) {
+        await env.DB.batch(importedInteractions.slice(index, index + 60).map((value) => env.DB.prepare(`INSERT INTO customer_interactions
+          (id,customer_name,customer_phone,type,details,assigned_to,next_follow_up,status,bill_id,created_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET customer_name=excluded.customer_name,
+          customer_phone=excluded.customer_phone,type=excluded.type,details=excluded.details,assigned_to=excluded.assigned_to,
+          next_follow_up=excluded.next_follow_up,status=excluded.status,bill_id=excluded.bill_id,updated_at=excluded.updated_at`)
+          .bind(clean(value.id) || uid("crm"), clean(value.customerName), clean(value.customerPhone), clean(value.type, "Follow-up"),
+            clean(value.details), clean(value.assignedTo), clean(value.nextFollowUp), clean(value.status, "Open"), clean(value.billId),
+            clean(value.createdAt, new Date().toISOString()), clean(value.updatedAt, new Date().toISOString()))));
+      }
+      for (let index = 0; index < importedAssignments.length; index += 60) {
+        await env.DB.batch(importedAssignments.slice(index, index + 60).map((value) => env.DB.prepare(`INSERT INTO supplier_assignments
+          (id,bill_id,bill_no,product_id,product_code,product_name,qty,supplier_id,purchase_cost,advance_paid,expected_date,status,notes,created_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET bill_id=excluded.bill_id,bill_no=excluded.bill_no,
+          product_id=excluded.product_id,product_code=excluded.product_code,product_name=excluded.product_name,qty=excluded.qty,
+          supplier_id=excluded.supplier_id,purchase_cost=excluded.purchase_cost,advance_paid=excluded.advance_paid,
+          expected_date=excluded.expected_date,status=excluded.status,notes=excluded.notes,updated_at=excluded.updated_at`)
+          .bind(clean(value.id) || uid("assign"), clean(value.billId), clean(value.billNo), clean(value.productId), clean(value.productCode),
+            clean(value.productName), Math.max(1, whole(value.qty, 1)), clean(value.supplierId), round2(numeric(value.purchaseCost)),
+            round2(numeric(value.advancePaid)), clean(value.expectedDate), clean(value.status, "Not ordered"), clean(value.notes),
+            clean(value.createdAt, new Date().toISOString()), clean(value.updatedAt, new Date().toISOString()))));
       }
       const maxBill = bills.reduce((max, bill) => Math.max(max, Number(clean(bill.billNo).match(/(\d+)$/)?.[1] || 0)), 0);
       await env.DB.prepare("UPDATE counters SET value=? WHERE key='bill'").bind(maxBill).run();
