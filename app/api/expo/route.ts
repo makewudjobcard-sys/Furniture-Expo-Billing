@@ -32,6 +32,7 @@ function clean(value: unknown, fallback = "") { return typeof value === "string"
 function numeric(value: unknown, fallback = 0) { const parsed = Number(value); return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback; }
 function whole(value: unknown, fallback = 0) { return Math.max(0, Math.floor(numeric(value, fallback))); }
 function round2(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
+function moneyForTask(value: number) { return `₹${round2(value).toLocaleString("en-IN")}`; }
 function uid(prefix: string) { return `${prefix}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`; }
 function safeJson<T>(value: unknown, fallback: T): T { try { return typeof value === "string" ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
 function cleanList(value: unknown, fallback: string[] = []) {
@@ -59,12 +60,16 @@ async function ensureSchema() {
       id TEXT PRIMARY KEY, bill_no TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL,
       customer_phone TEXT NOT NULL, customer_address TEXT NOT NULL DEFAULT '', items_json TEXT NOT NULL,
       staff_name TEXT NOT NULL DEFAULT '', counter_name TEXT NOT NULL DEFAULT '', product_total REAL NOT NULL DEFAULT 0,
-      against_order_extra REAL NOT NULL DEFAULT 0, subtotal REAL NOT NULL, discount_type TEXT NOT NULL DEFAULT 'amount',
+      against_order_extra REAL NOT NULL DEFAULT 0, card_charge REAL NOT NULL DEFAULT 0,
+      transport_charge REAL NOT NULL DEFAULT 0, other_charge REAL NOT NULL DEFAULT 0,
+      subtotal REAL NOT NULL, discount_type TEXT NOT NULL DEFAULT 'amount',
       discount_value REAL NOT NULL DEFAULT 0, discount REAL NOT NULL DEFAULT 0, taxable_value REAL NOT NULL DEFAULT 0,
       cgst REAL NOT NULL DEFAULT 0, sgst REAL NOT NULL DEFAULT 0, gst REAL NOT NULL DEFAULT 0,
       grand_total REAL NOT NULL, paid_amount REAL NOT NULL DEFAULT 0, balance_amount REAL NOT NULL DEFAULT 0,
       payment_mode TEXT NOT NULL DEFAULT 'CASH', payment_history_json TEXT NOT NULL DEFAULT '[]',
       delivery_date TEXT NOT NULL DEFAULT '', delivery_status TEXT NOT NULL DEFAULT 'Pending', delivered_at TEXT NOT NULL DEFAULT '',
+      order_notes TEXT NOT NULL DEFAULT '', accountant_name TEXT NOT NULL DEFAULT '', manager_name TEXT NOT NULL DEFAULT '',
+      document_type TEXT NOT NULL DEFAULT 'order_slip',
       status TEXT NOT NULL DEFAULT 'confirmed', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS settings (
@@ -85,11 +90,15 @@ async function ensureSchema() {
     ["bills", "client_request_id", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "staff_name", "TEXT NOT NULL DEFAULT ''"], ["bills", "counter_name", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "product_total", "REAL NOT NULL DEFAULT 0"], ["bills", "against_order_extra", "REAL NOT NULL DEFAULT 0"],
+    ["bills", "card_charge", "REAL NOT NULL DEFAULT 0"], ["bills", "transport_charge", "REAL NOT NULL DEFAULT 0"],
+    ["bills", "other_charge", "REAL NOT NULL DEFAULT 0"],
     ["bills", "discount_type", "TEXT NOT NULL DEFAULT 'amount'"], ["bills", "discount_value", "REAL NOT NULL DEFAULT 0"],
     ["bills", "taxable_value", "REAL NOT NULL DEFAULT 0"], ["bills", "cgst", "REAL NOT NULL DEFAULT 0"],
     ["bills", "sgst", "REAL NOT NULL DEFAULT 0"], ["bills", "gst", "REAL NOT NULL DEFAULT 0"],
     ["bills", "payment_history_json", "TEXT NOT NULL DEFAULT '[]'"], ["bills", "delivery_date", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "delivery_status", "TEXT NOT NULL DEFAULT 'Pending'"], ["bills", "delivered_at", "TEXT NOT NULL DEFAULT ''"],
+    ["bills", "order_notes", "TEXT NOT NULL DEFAULT ''"], ["bills", "accountant_name", "TEXT NOT NULL DEFAULT ''"],
+    ["bills", "manager_name", "TEXT NOT NULL DEFAULT ''"], ["bills", "document_type", "TEXT NOT NULL DEFAULT 'order_slip'"],
     ["settings", "staff_names_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["settings", "counter_names_json", "TEXT NOT NULL DEFAULT '[\"Counter 1\"]'"],
     ["settings", "default_counter", "TEXT NOT NULL DEFAULT 'Counter 1'"],
@@ -147,11 +156,14 @@ async function readState() {
       stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ORDER BY category,name`).all(),
     env.DB.prepare(`SELECT id,bill_no AS billNo,customer_name AS customerName,customer_phone AS customerPhone,
       customer_address AS customerAddress,items_json AS itemsJson,staff_name AS staffName,counter_name AS counterName,
-      product_total AS productTotal,against_order_extra AS againstOrderExtra,subtotal,discount_type AS discountType,
+      product_total AS productTotal,against_order_extra AS againstOrderExtra,card_charge AS cardCharge,
+      transport_charge AS transportCharge,other_charge AS otherCharge,subtotal,discount_type AS discountType,
       discount_value AS discountValue,discount,taxable_value AS taxableValue,cgst,sgst,gst,grand_total AS grandTotal,
       paid_amount AS paidAmount,balance_amount AS balanceAmount,payment_mode AS paymentMode,
       payment_history_json AS paymentHistoryJson,delivery_date AS deliveryDate,delivery_status AS deliveryStatus,
-      delivered_at AS deliveredAt,status,created_at AS createdAt FROM bills ORDER BY created_at DESC LIMIT 1000`).all(),
+      delivered_at AS deliveredAt,order_notes AS orderNotes,accountant_name AS accountantName,
+      manager_name AS managerName,document_type AS documentType,status,created_at AS createdAt
+      FROM bills ORDER BY created_at DESC LIMIT 1000`).all(),
     env.DB.prepare(`SELECT business_name AS businessName,subtitle,gstin,phone,address,gst_rate AS gstRate,
       bill_prefix AS billPrefix,staff_names_json AS staffNamesJson,counter_names_json AS counterNamesJson,
       default_counter AS defaultCounter,invoice_terms AS invoiceTerms,updated_at AS updatedAt FROM settings WHERE id=1`).first(),
@@ -228,7 +240,19 @@ export async function POST(request: Request) {
     const payload = await request.json() as Record<string, unknown>;
     const action = clean(payload.action);
 
-    if (action === "saveProduct") {
+    if (action === "resetDemoWorkspace") {
+      const runtime = env as typeof env & { APP_SESSION_SECRET?: string };
+      if (!runtime.APP_SESSION_SECRET || clean(payload.confirmation) !== runtime.APP_SESSION_SECRET) {
+        return Response.json({ error: "Reset authorization failed." }, { status: 403 });
+      }
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM supplier_assignments"),
+        env.DB.prepare("DELETE FROM customer_interactions"),
+        env.DB.prepare("DELETE FROM tasks"),
+        env.DB.prepare("DELETE FROM bills"),
+        env.DB.prepare("UPDATE counters SET value=0 WHERE key='bill'"),
+      ]);
+    } else if (action === "saveProduct") {
       const product = payload.product as ProductInput;
       if (!clean(product?.code) || !clean(product?.name) || numeric(product?.price) <= 0) {
         return Response.json({ error: "Product code, name and expo price are required." }, { status: 400 });
@@ -284,30 +308,55 @@ export async function POST(request: Request) {
       const discountType = clean(bill.discountType, "amount") === "percent" ? "percent" : "amount";
       const discountValue = numeric(bill.discountValue);
       const discount = round2(discountType === "percent" ? subtotal * Math.min(100, discountValue) / 100 : Math.min(subtotal, discountValue));
-      const grandTotal = round2(Math.max(0, subtotal - discount));
+      const goodsTotal = round2(Math.max(0, subtotal - discount));
+      const paymentMode = clean(bill.paymentMode, "CASH").toUpperCase();
+      const cardCharge = paymentMode === "CARD" ? round2(numeric(bill.cardCharge)) : 0;
+      const transportCharge = round2(numeric(bill.transportCharge));
+      const otherCharge = round2(numeric(bill.otherCharge));
+      const grandTotal = round2(goodsTotal + cardCharge + transportCharge + otherCharge);
       const gstRate = Math.max(0, Number(setting?.gstRate ?? 18));
-      const taxableValue = gstRate > 0 ? round2(grandTotal / (1 + gstRate / 100)) : grandTotal;
-      const gst = round2(grandTotal - taxableValue);
+      const taxableValue = gstRate > 0 ? round2(goodsTotal / (1 + gstRate / 100)) : goodsTotal;
+      const gst = round2(goodsTotal - taxableValue);
       const cgst = round2(gst / 2);
       const sgst = round2(gst - cgst);
       const paidAmount = round2(Math.min(grandTotal, numeric(bill.paidAmount)));
       const balanceAmount = round2(grandTotal - paidAmount);
-      const paymentMode = clean(bill.paymentMode, "CASH").toUpperCase();
       const now = new Date();
       const history: PaymentRecord[] = paidAmount > 0 ? [{ id: uid("pay"), amount: paidAmount, mode: paymentMode, note: "Initial Payment", date: now.toISOString() }] : [];
       const counter = await env.DB.prepare("UPDATE counters SET value=value+1 WHERE key='bill' RETURNING value").first<{ value: number }>();
       const billNo = `${clean(setting?.billPrefix, "EXP").toUpperCase()}-${String(counter?.value || Date.now()).padStart(4, "0")}`;
-      const inserted = await env.DB.prepare(`INSERT INTO bills
-        (id,bill_no,client_request_id,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
-        product_total,against_order_extra,subtotal,discount_type,discount_value,discount,taxable_value,cgst,sgst,gst,
-        grand_total,paid_amount,balance_amount,payment_mode,payment_history_json,delivery_date,delivery_status,status)
-        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+      const billId = uid("bill");
+      const columns = `id,bill_no,client_request_id,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
+        product_total,against_order_extra,card_charge,transport_charge,other_charge,subtotal,discount_type,discount_value,
+        discount,taxable_value,cgst,sgst,gst,grand_total,paid_amount,balance_amount,payment_mode,payment_history_json,
+        delivery_date,delivery_status,order_notes,accountant_name,manager_name,document_type,status`;
+      const inserted = await env.DB.prepare(`INSERT INTO bills (${columns})
+        SELECT ${Array.from({ length: 34 }, () => "?").join(",")}
         WHERE NOT EXISTS (SELECT 1 FROM bills WHERE client_request_id=?)`)
-        .bind(uid("bill"), billNo, clientRequestId, customerName, customerPhone, clean(bill.customerAddress), JSON.stringify(items),
+        .bind(billId, billNo, clientRequestId, customerName, customerPhone, clean(bill.customerAddress), JSON.stringify(items),
           clean(bill.staffName), clean(bill.counterName, setting?.defaultCounter || "Counter 1"), productTotal,
-          againstOrderExtra, subtotal, discountType, round2(discountValue), discount, taxableValue, cgst, sgst, gst,
-          grandTotal, paidAmount, balanceAmount, paymentMode, JSON.stringify(history), clean(bill.deliveryDate), "Pending", "confirmed", clientRequestId).run();
+          againstOrderExtra, cardCharge, transportCharge, otherCharge, subtotal, discountType, round2(discountValue),
+          discount, taxableValue, cgst, sgst, gst, grandTotal, paidAmount, balanceAmount, paymentMode, JSON.stringify(history),
+          clean(bill.deliveryDate), "Order Booked", clean(bill.orderNotes), clean(bill.accountantName), clean(bill.managerName),
+          "order_slip", "confirmed", clientRequestId).run();
       if (!inserted.meta.changes) return Response.json(await readState(), { headers: { "Cache-Control": "no-store" } });
+      const deliveryDate = clean(bill.deliveryDate);
+      const followUpDate = new Date(now.getTime() + 86400000).toISOString().slice(0, 10);
+      const followUpStatements = [
+        env.DB.prepare(`INSERT INTO customer_interactions
+          (id,customer_name,customer_phone,type,details,assigned_to,next_follow_up,status,bill_id,updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+          .bind(uid("crm"), customerName, customerPhone, "Order Follow-up", `Confirm order and delivery details for ${billNo}.`, clean(bill.staffName), followUpDate, "Open", billId),
+      ];
+      if (deliveryDate) followUpStatements.push(env.DB.prepare(`INSERT INTO tasks
+        (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+        .bind(uid("task"), "Delivery", `Deliver ${billNo} to ${customerName}`, "Confirm readiness, transport and customer availability.", clean(bill.staffName), deliveryDate, "High", "Pending", billId, customerPhone));
+      if (balanceAmount > 0) followUpStatements.push(env.DB.prepare(`INSERT INTO tasks
+        (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+        .bind(uid("task"), "Financial", `Collect ${moneyForTask(balanceAmount)} balance · ${billNo}`, "Collect the pending amount before delivery.", clean(bill.accountantName), deliveryDate || followUpDate, "High", "Pending", billId, customerPhone));
+      await env.DB.batch(followUpStatements);
     } else if (action === "cancelBill") {
       await env.DB.prepare("UPDATE bills SET status='cancelled' WHERE id=? AND status<>'cancelled'").bind(clean(payload.id)).run();
     } else if (action === "addPayment") {
@@ -325,13 +374,21 @@ export async function POST(request: Request) {
     } else if (action === "updateBillDetails") {
       const value = payload.bill as Record<string, unknown>;
       if (!clean(value.customerName) || !clean(value.customerPhone)) return Response.json({ error: "Customer name and phone are required." }, { status: 400 });
-      await env.DB.prepare(`UPDATE bills SET customer_name=?,customer_phone=?,customer_address=?,staff_name=?,counter_name=?,delivery_date=?
+      await env.DB.prepare(`UPDATE bills SET customer_name=?,customer_phone=?,customer_address=?,staff_name=?,counter_name=?,delivery_date=?,
+        order_notes=?,accountant_name=?,manager_name=?
         WHERE id=? AND status<>'cancelled'`).bind(clean(value.customerName), clean(value.customerPhone), clean(value.customerAddress),
-          clean(value.staffName), clean(value.counterName), clean(value.deliveryDate), clean(value.id)).run();
+          clean(value.staffName), clean(value.counterName), clean(value.deliveryDate), clean(value.orderNotes),
+          clean(value.accountantName), clean(value.managerName), clean(value.id)).run();
     } else if (action === "setDelivery") {
       const delivered = Boolean(payload.delivered);
       await env.DB.prepare("UPDATE bills SET delivery_status=?,delivered_at=? WHERE id=? AND status<>'cancelled'")
         .bind(delivered ? "Delivered" : "Pending", delivered ? new Date().toISOString() : "", clean(payload.id)).run();
+    } else if (action === "setDeliveryStatus") {
+      const allowed = new Set(["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"]);
+      const deliveryStatus = clean(payload.deliveryStatus);
+      if (!allowed.has(deliveryStatus)) return Response.json({ error: "Choose a valid order status." }, { status: 400 });
+      await env.DB.prepare("UPDATE bills SET delivery_status=?,delivered_at=? WHERE id=? AND status<>'cancelled'")
+        .bind(deliveryStatus, deliveryStatus === "Delivered" ? new Date().toISOString() : "", clean(payload.id)).run();
     } else if (action === "saveSupplier") {
       const value = payload.supplier as SupplierInput;
       if (!clean(value?.name) || !clean(value?.phone)) return Response.json({ error: "Supplier name and phone are required." }, { status: 400 });

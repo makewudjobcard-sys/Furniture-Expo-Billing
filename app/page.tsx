@@ -77,6 +77,9 @@ type Bill = {
   counterName: string;
   productTotal: number;
   againstOrderExtra: number;
+  cardCharge: number;
+  transportCharge: number;
+  otherCharge: number;
   subtotal: number;
   discountType: string;
   discountValue: number;
@@ -93,6 +96,10 @@ type Bill = {
   deliveryDate: string;
   deliveryStatus: string;
   deliveredAt: string;
+  orderNotes: string;
+  accountantName: string;
+  managerName: string;
+  documentType: string;
   status: string;
   createdAt: string;
 };
@@ -195,7 +202,7 @@ const categories = [
   "Table",
   "Others",
 ];
-const paymentModes = ["CASH", "UPI", "CARD", "BANK TRANSFER", "MIXED"];
+const paymentModes = ["CASH", "GPAY", "CARD", "RTGS", "BAJAJ", "CHEQUE"];
 const palette = ["clay", "sage", "sand", "ink", "ochre", "rose"];
 
 function money(value: number) {
@@ -210,6 +217,14 @@ function shortDate(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+function printSafe(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 function isoDate(value = new Date()) {
   return value.toISOString().slice(0, 10);
@@ -329,6 +344,9 @@ export default function Home() {
     staffName: "",
     counterName: "Counter 1",
     deliveryDate: "",
+    accountantName: "",
+    managerName: "",
+    orderNotes: "",
   });
   const [customerHint, setCustomerHint] = useState("");
   const [discountType, setDiscountType] = useState<"amount" | "percent">(
@@ -337,6 +355,9 @@ export default function Home() {
   const [discountValue, setDiscountValue] = useState(0);
   const [paidAmount, setPaidAmount] = useState(0);
   const [paymentMode, setPaymentMode] = useState("CASH");
+  const [cardCharge, setCardCharge] = useState(0);
+  const [transportCharge, setTransportCharge] = useState(0);
+  const [otherCharge, setOtherCharge] = useState(0);
   const [billSearch, setBillSearch] = useState("");
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
   const [editingBill, setEditingBill] = useState<Bill | null>(null);
@@ -557,12 +578,15 @@ export default function Home() {
     discountType === "percent"
       ? (subtotal * Math.min(100, discountValue)) / 100
       : Math.min(subtotal, discountValue);
-  const grandTotal = Math.max(0, subtotal - discount);
+  const goodsTotal = Math.max(0, subtotal - discount);
+  const appliedCardCharge = paymentMode === "CARD" ? cardCharge : 0;
+  const extraCharges = appliedCardCharge + transportCharge + otherCharge;
+  const grandTotal = goodsTotal + extraCharges;
   const taxableValue =
     state.settings.gstRate > 0
-      ? grandTotal / (1 + state.settings.gstRate / 100)
-      : grandTotal;
-  const gst = grandTotal - taxableValue;
+      ? goodsTotal / (1 + state.settings.gstRate / 100)
+      : goodsTotal;
+  const gst = goodsTotal - taxableValue;
   const cgst = gst / 2;
   const sgst = gst - cgst;
   const balance = Math.max(0, grandTotal - paidAmount);
@@ -724,7 +748,7 @@ export default function Home() {
         name: prior.customerName,
         address: prior.customerAddress,
       }));
-      setCustomerHint(`Existing customer · Last bill ${prior.billNo}`);
+      setCustomerHint(`Existing customer · Last order ${prior.billNo}`);
     } else setCustomerHint("New customer");
   }
 
@@ -733,7 +757,7 @@ export default function Home() {
     if (!customer.name.trim() || !customer.phone.trim())
       return notify("Customer name and phone number are required.");
     if (!online)
-      return notify("Internet is required to confirm a bill safely.");
+      return notify("Internet is required to save an order safely.");
     if (!billRequestIdRef.current) billRequestIdRef.current = crypto.randomUUID();
     const data = await mutate(
       {
@@ -746,6 +770,9 @@ export default function Home() {
           staffName: customer.staffName,
           counterName: customer.counterName,
           deliveryDate: customer.deliveryDate,
+          accountantName: customer.accountantName,
+          managerName: customer.managerName,
+          orderNotes: customer.orderNotes,
           items: cart.map((item) => ({
             productId: item.id,
             code: item.code,
@@ -763,9 +790,12 @@ export default function Home() {
           discountValue,
           paidAmount,
           paymentMode,
+          cardCharge: appliedCardCharge,
+          transportCharge,
+          otherCharge,
         },
       },
-      "Bill confirmed, GST calculated and stock synced.",
+      "Order booked, follow-ups created and stock synced.",
     );
     if (data) {
       billRequestIdRef.current = "";
@@ -778,11 +808,17 @@ export default function Home() {
         staffName: "",
         counterName: data.settings.defaultCounter || "Counter 1",
         deliveryDate: "",
+        accountantName: "",
+        managerName: "",
+        orderNotes: "",
       });
       setDiscountType("amount");
       setDiscountValue(0);
       setPaidAmount(0);
       setPaymentMode("CASH");
+      setCardCharge(0);
+      setTransportCharge(0);
+      setOtherCharge(0);
       setActive("bills");
       setSelectedBill(created || null);
       const againstItems = created?.items.filter((item) => item.againstOrder) || [];
@@ -1081,7 +1117,7 @@ export default function Home() {
   }
   function openAssignmentForBill(bill: Bill) {
     const againstItems = bill.items.filter((item) => item.againstOrder);
-    if (!againstItems.length) return notify("This bill has no Against Order items.");
+    if (!againstItems.length) return notify("This order has no Against Order items.");
     setAssignmentBill(bill);
     setAssignmentDrafts(againstItems.map((item) => {
       const existing = state.supplierAssignments.find((assignment) => assignment.billId === bill.id && assignment.productId === item.productId);
@@ -1089,17 +1125,38 @@ export default function Home() {
     }));
   }
 
-  function printBill(bill: Bill) {
-    const popup = window.open("", "invoice", "width=900,height=900");
-    if (!popup) return notify("Allow popups to print the invoice.");
+  function printBill(bill: Bill, mode: "order" | "invoice" = "order") {
+    const popup = window.open("", `${mode}-${bill.billNo}`, "width=980,height=900");
+    if (!popup) return notify("Allow popups to print the order slip.");
     const settings = state.settings;
-    popup.document.write(
-      `<!doctype html><html><head><title>${bill.billNo}</title><style>body{font-family:Arial,sans-serif;color:#251a14;padding:30px;max-width:800px;margin:auto}.head{display:flex;justify-content:space-between;border-bottom:2px solid #251a14;padding-bottom:18px}h1{margin:0;font-size:28px}.muted{color:#766a62;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:9px 5px;border-bottom:1px solid #ddd;text-align:left;font-size:12px}th:last-child,td:last-child{text-align:right}.summary{margin-left:auto;width:350px;margin-top:20px}.row{display:flex;justify-content:space-between;padding:5px 0}.grand{font-size:19px;font-weight:bold;border-top:2px solid #251a14}.cancel{padding:10px;text-align:center;color:#b23d32;background:#f8e1de;font-weight:bold}.history{margin-top:18px}.history div{display:flex;justify-content:space-between;padding:5px;border-bottom:1px solid #eee}@media print{body{padding:0}}</style></head><body>${bill.status === "cancelled" ? '<div class="cancel">CANCELLED BILL</div>' : ""}<div class="head"><div><h1>${settings.businessName}</h1><div class="muted">${settings.address || settings.subtitle}</div><div class="muted">${settings.phone ? `Phone: ${settings.phone}` : ""} ${settings.gstin ? `· GSTIN: ${settings.gstin}` : ""}</div></div><div><b>${bill.billNo}</b><br><span class="muted">${shortDate(bill.createdAt)}</span></div></div><p><b>Customer:</b> ${bill.customerName} · ${bill.customerPhone}<br><span class="muted">${bill.customerAddress || ""}</span><br><span class="muted">Staff: ${bill.staffName || "—"} · Counter: ${bill.counterName || "—"}</span></p><table><thead><tr><th>Item</th><th>Type</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${bill.items.map((item) => `<tr><td><b>${item.name}</b><br><span class="muted">${item.code}${item.size ? ` · ${item.size}` : ""}${item.woodType ? ` · ${item.woodType}` : ""}${item.customizeDetails ? `<br>Customize: ${item.customizeDetails}` : ""}</span></td><td>${item.againstOrder ? "Against Order" : "Stock"}</td><td>${item.qty}</td><td>${money(item.price)}</td><td>${money(item.price * item.qty + Number(item.againstOrderExtra || 0))}</td></tr>`).join("")}</tbody></table><div class="summary"><div class="row"><span>Product Total</span><b>${money(bill.productTotal)}</b></div><div class="row"><span>Against Order Extra</span><b>${money(bill.againstOrderExtra)}</b></div><div class="row"><span>Discount</span><b>− ${money(bill.discount)}</b></div><div class="row"><span>Taxable Value</span><b>${money(bill.taxableValue)}</b></div><div class="row"><span>CGST ${state.settings.gstRate / 2}%</span><b>${money(bill.cgst)}</b></div><div class="row"><span>SGST ${state.settings.gstRate / 2}%</span><b>${money(bill.sgst)}</b></div><div class="row grand"><span>Grand Total</span><span>${money(bill.grandTotal)}</span></div><div class="row"><span>Paid</span><b>${money(bill.paidAmount)}</b></div><div class="row"><span>Balance</span><b>${money(bill.balanceAmount)}</b></div></div><p class="muted">GST Inclusive · Expected Delivery: ${bill.deliveryDate || "Not set"} · Delivery: ${bill.deliveryStatus}</p>${bill.paymentHistory.length ? `<div class="history"><b>Payment History</b>${bill.paymentHistory.map((payment) => `<div><span>${shortDate(payment.date)} · ${payment.mode}${payment.note ? ` · ${payment.note}` : ""}</span><b>${money(payment.amount)}</b></div>`).join("")}</div>` : ""}<p style="margin-top:35px;text-align:center" class="muted">${settings.invoiceTerms}</p><script>window.onload=()=>window.print()</script></body></html>`,
-    );
+    const title = mode === "invoice" ? "FINAL GST INVOICE" : "ORDER BOOKING SLIP";
+    const productImages = bill.items
+      .map((item) => state.products.find((product) => product.id === item.productId || product.code === item.code))
+      .filter((product): product is Product => Boolean(product?.imageUrl));
+    const gstRows = mode === "invoice" ? `<div class="sumrow"><span>Taxable value</span><b>${money(bill.taxableValue)}</b></div><div class="sumrow"><span>CGST ${state.settings.gstRate / 2}%</span><b>${money(bill.cgst)}</b></div><div class="sumrow"><span>SGST ${state.settings.gstRate / 2}%</span><b>${money(bill.sgst)}</b></div>` : "";
+    const extraRows = [
+      ["Card charge", bill.cardCharge],
+      ["Transport charge", bill.transportCharge],
+      ["Other charge", bill.otherCharge],
+    ].filter(([, value]) => Number(value) > 0).map(([label, value]) => `<div class="sumrow"><span>${label}</span><b>${money(Number(value))}</b></div>`).join("");
+    popup.document.write(`<!doctype html><html><head><title>${printSafe(title)} · ${printSafe(bill.billNo)}</title><style>
+      *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#17120f;padding:22px;max-width:900px;margin:auto;font-size:12px}.brand{text-align:center;border:1px solid #222;padding:14px}.brand h1{margin:0;font-size:30px;letter-spacing:.04em}.muted{color:#655b54;font-size:11px}.doc-title{text-align:center;background:#dbe9f6;border:1px solid #222;border-top:0;padding:7px;font-size:17px;font-weight:800}.meta{display:grid;grid-template-columns:1fr 260px;border-left:1px solid #222}.meta>div{display:grid;grid-template-columns:105px 1fr}.meta span,.meta b{padding:7px;border-right:1px solid #222;border-bottom:1px solid #222}.meta span{background:#e9f1f8;font-weight:700}.meta b{font-weight:600}table{width:100%;border-collapse:collapse}th,td{border:1px solid #222;padding:7px;text-align:center}th{background:#dbe9f6}td:nth-child(2){text-align:left}.totals-wrap{display:grid;grid-template-columns:1fr 340px;border-left:1px solid #222}.note{padding:10px;border-right:1px solid #222;border-bottom:1px solid #222}.summary{border-right:1px solid #222}.sumrow{display:flex;justify-content:space-between;padding:6px 9px;border-bottom:1px solid #222}.sumrow.grand{background:#dbe9f6;font-size:15px}.photos{display:flex;gap:5px;padding:7px;border:1px solid #222;border-top:0;min-height:120px}.photos img{width:150px;height:110px;object-fit:cover;border:1px solid #aaa}.payment{display:grid;grid-template-columns:repeat(6,1fr);border-left:1px solid #222}.payment span{padding:8px;text-align:center;border-right:1px solid #222;border-bottom:1px solid #222;font-weight:700}.payment .active{background:#ffef57}.signatures{display:grid;grid-template-columns:1fr 1.5fr 1fr;border-left:1px solid #222}.signatures div{min-height:64px;padding:8px;text-align:center;border-right:1px solid #222;border-bottom:1px solid #222}.cancel{padding:10px;text-align:center;color:#a6251d;background:#f8dddd;font-weight:800}.history{margin-top:15px}.history div{display:flex;justify-content:space-between;padding:5px;border-bottom:1px solid #ddd}@media print{body{padding:0}.no-print{display:none}}
+    </style></head><body>
+      ${bill.status === "cancelled" ? '<div class="cancel">CANCELLED ORDER</div>' : ""}
+      <div class="brand"><h1>${printSafe(settings.businessName)}</h1><div>${printSafe(settings.address || settings.subtitle)}</div><div class="muted">${settings.gstin ? `GSTIN: ${printSafe(settings.gstin)} · ` : ""}${settings.phone ? `Contact: ${printSafe(settings.phone)}` : ""}</div></div>
+      <div class="doc-title">${title}</div>
+      <div class="meta"><div><span>Name</span><b>${printSafe(bill.customerName)}</b><span>Contact</span><b>${printSafe(bill.customerPhone)}</b><span>Address</span><b>${printSafe(bill.customerAddress || "—")}</b></div><div><span>Order No.</span><b>${printSafe(bill.billNo)}</b><span>Order Date</span><b>${printSafe(shortDate(bill.createdAt))}</b><span>Status</span><b>${printSafe(bill.deliveryStatus)}</b><span>Expected Date</span><b>${printSafe(bill.deliveryDate || "Not set")}</b></div></div>
+      <table><thead><tr><th>S.No</th><th>Product and Model</th><th>Size</th><th>Unit Price</th><th>Qty</th><th>Total</th></tr></thead><tbody>${bill.items.map((item, index) => `<tr><td>${index + 1}</td><td><b>${printSafe(item.name)}</b><br><span class="muted">${printSafe(item.code)} · ${item.againstOrder ? "Against Order" : "Stock"}${item.customizeDetails ? `<br>${printSafe(item.customizeDetails)}` : ""}</span></td><td>${printSafe(item.size || "—")}</td><td>${money(item.price)}</td><td>${item.qty}</td><td>${money(item.price * item.qty + Number(item.againstOrderExtra || 0))}</td></tr>`).join("")}</tbody></table>
+      <div class="totals-wrap"><div class="note"><b>Note:</b><br>${printSafe(bill.orderNotes || settings.invoiceTerms)}</div><div class="summary"><div class="sumrow"><span>Product total</span><b>${money(bill.productTotal + bill.againstOrderExtra)}</b></div>${bill.discount ? `<div class="sumrow"><span>Discount</span><b>− ${money(bill.discount)}</b></div>` : ""}${gstRows}${extraRows}<div class="sumrow grand"><span>Grand Total</span><b>${money(bill.grandTotal)}</b></div><div class="sumrow"><span>Advance</span><b>${money(bill.paidAmount)}</b></div><div class="sumrow"><span>Balance</span><b>${money(bill.balanceAmount)}</b></div></div></div>
+      ${productImages.length ? `<div class="photos">${productImages.slice(0, 5).map((product) => `<img src="${printSafe(product.imageUrl)}" alt="${printSafe(product.name)}">`).join("")}</div>` : ""}
+      <div class="payment">${paymentModes.map((payment) => `<span class="${bill.paymentMode === payment ? "active" : ""}">${payment}</span>`).join("")}</div>
+      <div class="signatures"><div><b>Accountant</b><br><br>${printSafe(bill.accountantName || "")}</div><div><b>Order Booking Staff</b><br><br>${printSafe(bill.staffName || "")}</div><div><b>Manager</b><br><br>${printSafe(bill.managerName || "")}</div></div>
+      ${bill.paymentHistory.length ? `<div class="history"><b>Payment History</b>${bill.paymentHistory.map((payment) => `<div><span>${printSafe(shortDate(payment.date))} · ${printSafe(payment.mode)}${payment.note ? ` · ${printSafe(payment.note)}` : ""}</span><b>${money(payment.amount)}</b></div>`).join("")}</div>` : ""}
+      <script>window.onload=()=>window.print()</script></body></html>`);
     popup.document.close();
   }
   function shareWhatsApp(bill: Bill) {
-    const text = `${state.settings.businessName}\nInvoice: ${bill.billNo}\nCustomer: ${bill.customerName}\nTotal: ${money(bill.grandTotal)}\nPaid: ${money(bill.paidAmount)}\nBalance: ${money(bill.balanceAmount)}\nDelivery: ${bill.deliveryDate || "Not set"}\nThank you!`;
+    const text = `${state.settings.businessName}\nOrder: ${bill.billNo}\nCustomer: ${bill.customerName}\nTotal: ${money(bill.grandTotal)}\nAdvance: ${money(bill.paidAmount)}\nBalance: ${money(bill.balanceAmount)}\nExpected delivery: ${bill.deliveryDate || "Not set"}\nStatus: ${bill.deliveryStatus}\nThank you!`;
     const phone = bill.customerPhone.replace(/\D/g, "");
     window.open(
       `https://wa.me/${phone.startsWith("91") ? phone : `91${phone}`}?text=${encodeURIComponent(text)}`,
@@ -1112,9 +1169,10 @@ export default function Home() {
     const XLSX = await import("xlsx");
     const rows: Array<Array<string | number>> = [
       [state.settings.businessName],
-      ["Bill No", bill.billNo, "Date", shortDate(bill.createdAt)],
+      ["Order No", bill.billNo, "Date", shortDate(bill.createdAt)],
       ["Customer", bill.customerName, "Phone", bill.customerPhone],
-      ["Staff", bill.staffName, "Counter", bill.counterName],
+      ["Order Booking Staff", bill.staffName, "Accountant", bill.accountantName],
+      ["Manager", bill.managerName, "Payment Mode", bill.paymentMode],
       [],
       [
         "Code",
@@ -1146,11 +1204,15 @@ export default function Home() {
       [`CGST ${state.settings.gstRate / 2}%`, bill.cgst],
       [`SGST ${state.settings.gstRate / 2}%`, bill.sgst],
       ["GST Total", bill.gst],
+      ["Card Charge", bill.cardCharge],
+      ["Transport Charge", bill.transportCharge],
+      ["Other Charge", bill.otherCharge],
       ["Grand Total", bill.grandTotal],
-      ["Paid", bill.paidAmount],
+      ["Advance", bill.paidAmount],
       ["Balance", bill.balanceAmount],
       ["Expected Delivery", bill.deliveryDate],
       ["Delivery Status", bill.deliveryStatus],
+      ["Order Notes", bill.orderNotes],
       [],
       ["Payment History"],
       ["Date", "Mode", "Note", "Amount"],
@@ -1165,7 +1227,7 @@ export default function Home() {
     XLSX.utils.book_append_sheet(
       workbook,
       XLSX.utils.aoa_to_sheet(rows),
-      "Invoice",
+      "Order Slip",
     );
     XLSX.writeFile(workbook, `${bill.billNo}.xlsx`);
   }
@@ -1363,6 +1425,19 @@ export default function Home() {
   const supplierOrdersOpen = state.supplierAssignments.filter((item) => !["Received", "Closed", "Cancelled"].includes(item.status));
   const supplierOrdersDelayed = supplierOrdersOpen.filter((item) => item.expectedDate && item.expectedDate < isoDate());
   const supplierPending = state.supplierAssignments.reduce((sum, item) => sum + Math.max(0, item.purchaseCost - item.advancePaid), 0);
+  const todayActionItems = [
+    ...activeBills
+      .filter((bill) => bill.deliveryStatus !== "Delivered" && bill.deliveryDate && bill.deliveryDate < isoDate())
+      .map((bill) => ({ id: `delivery-${bill.id}`, group: "urgent", icon: "⇢", title: `Delayed delivery · ${bill.customerName}`, detail: `${bill.billNo} · Expected ${bill.deliveryDate}`, action: "View order", open: () => setSelectedBill(bill) })),
+    ...openComplaints.map((item) => ({ id: `complaint-${item.id}`, group: "urgent", icon: "!", title: `Complaint · ${item.customerName}`, detail: item.details, action: "Resolve", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
+    ...supplierOrdersDelayed.map((item) => ({ id: `supplier-${item.id}`, group: "urgent", icon: "◇", title: `Supplier delay · ${item.productName}`, detail: `${item.billNo} · Expected ${item.expectedDate}`, action: "Update", open: () => setActive("suppliers") })),
+    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: task.priority === "High" ? "urgent" : "today", icon: "✓", title: task.title, detail: `${task.category}${task.assignedTo ? ` · ${task.assignedTo}` : ""}`, action: "Done", open: () => mutate({ action: "saveTask", task: { ...task, status: "Completed" } }, "Task completed.") })),
+    ...followUpsDue.filter((item) => item.type !== "Complaint").map((item) => ({ id: `follow-${item.id}`, group: "today", icon: "☎", title: `${item.type} · ${item.customerName}`, detail: `${item.customerPhone}${item.details ? ` · ${item.details}` : ""}`, action: "Open", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
+    ...activeBills.filter((bill) => bill.deliveryStatus !== "Delivered" && bill.deliveryDate === isoDate()).map((bill) => ({ id: `today-delivery-${bill.id}`, group: "today", icon: "⇢", title: `Delivery today · ${bill.customerName}`, detail: `${bill.billNo} · ${bill.customerPhone}`, action: "View", open: () => setSelectedBill(bill) })),
+    ...activeBills.filter((bill) => bill.balanceAmount > 0).map((bill) => ({ id: `balance-${bill.id}`, group: "today", icon: "₹", title: `Collect balance · ${bill.customerName}`, detail: `${bill.billNo} · ${money(bill.balanceAmount)}`, action: "Collect", open: () => setSelectedBill(bill) })),
+    ...state.products.filter((product) => product.stockQty <= 2).map((product) => ({ id: `stock-${product.id}`, group: "routine", icon: "▦", title: `Low stock · ${product.name}`, detail: `${product.code} · ${product.stockQty > 0 ? `${product.stockQty} remaining` : "Out of stock"}`, action: "Stock", open: () => { setSearch(product.code); setStockFilter("all"); setActive("products"); } })),
+  ];
+  const completedToday = state.tasks.filter((task) => task.status === "Completed" && task.updatedAt?.slice(0, 10) === isoDate()).length;
 
   if (authStatus === "checking") {
     return <div className="login-shell"><div className="login-loading"><span>FE</span><strong>Furniture Expo</strong><small>Opening secure billing desk…</small></div></div>;
@@ -1380,7 +1455,7 @@ export default function Home() {
             {loginError && <div className="login-error" role="alert">{loginError}</div>}
             <button className="primary-action" disabled={loginBusy}>{loginBusy ? "Signing in…" : "Open billing desk"}<span>→</span></button>
           </form>
-          <div className="login-assurance"><span>● Live cloud data</span><span>GST-ready invoices</span><span>Mobile + PC</span></div>
+          <div className="login-assurance"><span>● Live cloud data</span><span>Order slip + GST invoice</span><span>Mobile + PC</span></div>
         </section>
         <aside className="login-visual"><span className="eyebrow">Expo operations</span><h2>One stock.<br />Every counter.</h2><p>Ready stock, Against Order, collections and deliveries—kept together in real time.</p><div className="login-stats"><div><strong>6 sec</strong><small>Auto sync</small></div><div><strong>100%</strong><small>Cloud saved</small></div><div><strong>QR</strong><small>Fast billing</small></div></div></aside>
       </div>
@@ -1402,26 +1477,28 @@ export default function Home() {
             active={active === "dashboard"}
             onClick={() => setActive("dashboard")}
             icon="⌂"
-            label="Dashboard"
+            label="Today Desk"
           />
           <Nav
             active={active === "billing"}
             onClick={() => setActive("billing")}
             icon="₹"
-            label="New bill"
+            label="New order"
           />
           <Nav
             active={active === "products"}
             onClick={() => setActive("products")}
             icon="▦"
-            label="Products"
+            label="Inventory"
           />
           <Nav
             active={active === "bills"}
             onClick={() => setActive("bills")}
             icon="≡"
-            label="Bills"
+            label="Orders"
           />
+          <details className="nav-more" open={["deliveries", "operations", "suppliers", "reports", "settings"].includes(active)}>
+            <summary>••• More / Admin</summary>
           <Nav
             active={active === "deliveries"}
             onClick={() => setActive("deliveries")}
@@ -1442,6 +1519,7 @@ export default function Home() {
             icon="⚙"
             label="Settings"
           />
+          </details>
         </nav>
         <div className={`sync-card ${online ? "online" : "offline"}`}>
           <span className="sync-dot" />
@@ -1475,13 +1553,13 @@ export default function Home() {
             active={active === "dashboard"}
             onClick={() => setActive("dashboard")}
             icon="⌂"
-            label="Home"
+            label="Today"
           />
           <Nav
             active={active === "billing"}
             onClick={() => setActive("billing")}
             icon="₹"
-            label="Bill"
+            label="Order"
           />
           <Nav
             active={active === "products"}
@@ -1493,7 +1571,7 @@ export default function Home() {
             active={active === "bills"}
             onClick={() => setActive("bills")}
             icon="≡"
-            label="Bills"
+            label="Orders"
           />
           <Nav
             active={active === "deliveries"}
@@ -1519,57 +1597,41 @@ export default function Home() {
 
         {active === "dashboard" && (
           <section className="page-section dashboard-page">
-            <div className="section-heading">
+            <div className="section-heading today-heading">
               <div>
-                <span className="eyebrow">Live expo overview</span>
-                <h1>Good decisions, at a glance.</h1>
-                <p>
-                  Sales, stock, delivery and collections from every counter.
-                </p>
+                <span className="eyebrow">Today desk · {new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</span>
+                <h1>Good morning. What should we finish today?</h1>
+                <p>Orders, collections, follow-ups and showroom work—sorted by urgency.</p>
               </div>
-              <button
-                className="primary-small"
-                onClick={() => setActive("billing")}
-              >
-                ＋ Start new bill
-              </button>
+              <div className="heading-actions">
+                <button className="secondary-action" onClick={() => { setTaskForm({ category: "General", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
+                <button className="primary-small" onClick={() => setActive("billing")}>＋ New order</button>
+              </div>
             </div>
-            <div className="metric-grid">
-              <Metric
-                label="Today sales"
-                value={money(todaySales)}
-                note={`${todayBills.length} confirmed bills`}
-              />
-              <Metric
-                label="Ready stock"
-                value={String(totalStock)}
-                note={`${state.products.length} product models`}
-              />
-              <Metric
-                label="Payment pending"
-                value={money(pendingAmount)}
-                note={`${activeBills.filter((bill) => bill.balanceAmount > 0).length} bills with balance`}
-                alert
-              />
-              <Metric
-                label="Today delivery"
-                value={String(deliveryCounts.today)}
-                note={`${deliveryCounts.pending} pending / overdue`}
-              />
+            <div className="today-overview">
+              <div className="today-count"><strong>{todayActionItems.length}</strong><span>actions pending</span><small>{completedToday} completed today</small></div>
+              <div className="today-summary"><span><b>{money(todaySales)}</b>Today sales</span><span><b>{money(pendingAmount)}</b>To collect</span><span><b>{deliveryCounts.today}</b>Today deliveries</span><span><b>{totalStock}</b>Ready stock</span></div>
             </div>
-            <article className="action-centre">
-              <div className="card-heading">
-                <div><span className="eyebrow">Today action centre</span><h2>What needs attention</h2></div>
-                <button onClick={() => setActive("operations")}>Manage all →</button>
-              </div>
-              <div className="action-grid">
-                <button onClick={() => { setOperationsTab("tasks"); setActive("operations"); }} className={dueTasks.length ? "attention" : ""}><strong>{dueTasks.length}</strong><span>Tasks due</span><small>Cleaning, marketing, recruitment & finance</small></button>
-                <button onClick={() => { setOperationsTab("customers"); setActive("operations"); }} className={followUpsDue.length ? "attention" : ""}><strong>{followUpsDue.length}</strong><span>Follow-ups due</span><small>Enquiries, orders and service calls</small></button>
-                <button onClick={() => { setOperationsTab("customers"); setActive("operations"); }} className={openComplaints.length ? "danger" : ""}><strong>{openComplaints.length}</strong><span>Open complaints</span><small>Customer issues waiting for closure</small></button>
-                <button onClick={() => setActive("deliveries")} className={deliveryCounts.pending ? "attention" : ""}><strong>{deliveryCounts.pending}</strong><span>Delayed deliveries</span><small>Pending or overdue commitments</small></button>
-                <button onClick={() => setActive("suppliers")} className={supplierOrdersDelayed.length ? "danger" : ""}><strong>{supplierOrdersDelayed.length}</strong><span>Supplier delays</span><small>{money(supplierPending)} purchase balance</small></button>
-                <button onClick={() => setActive("bills")} className={pendingAmount ? "attention" : ""}><strong>{activeBills.filter((bill) => bill.balanceAmount > 0).length}</strong><span>Customer payments</span><small>{money(pendingAmount)} outstanding</small></button>
-              </div>
+            <article className="today-planner">
+              {([
+                ["urgent", "Urgent", "No urgent issues. Everything is under control."],
+                ["today", "Today", "No scheduled work for today."],
+                ["routine", "Stock check", "Stock levels look healthy."],
+              ] as const).map(([group, label, empty]) => {
+                const rows = todayActionItems.filter((item) => item.group === group);
+                return <section className={`today-group ${group}`} key={group}>
+                  <header><div><span className="today-dot" /><h2>{label}</h2></div><strong>{rows.length}</strong></header>
+                  <div className="today-list">
+                    {rows.slice(0, group === "routine" ? 5 : 8).map((item) => <div className="today-item" key={item.id}>
+                      <span className="today-icon">{item.icon}</span>
+                      <button className="today-copy" onClick={item.open}><strong>{item.title}</strong><small>{item.detail}</small></button>
+                      <button className="today-action" onClick={item.open}>{item.action} →</button>
+                    </div>)}
+                    {!rows.length && <div className="today-empty">✓ {empty}</div>}
+                  </div>
+                </section>;
+              })}
+              <footer><button onClick={() => { setOperationsTab("tasks"); setActive("operations"); }}>Manage all tasks</button><button onClick={() => { setOperationsTab("customers"); setActive("operations"); }}>Customer follow-ups</button></footer>
             </article>
             <div className="dashboard-grid">
               <article className="dashboard-card">
@@ -1661,8 +1723,9 @@ export default function Home() {
             <div className="catalog-panel">
               <div className="section-heading">
                 <div>
-                  <span className="eyebrow">Expo counter</span>
-                  <h1>Build a GST bill, fast.</h1>
+                  <span className="eyebrow">Showroom order desk</span>
+                  <h1>Book a furniture order, clearly.</h1>
+                  <p>Select products, confirm delivery, collect advance and print the order slip.</p>
                   <p>
                     QR scan, stock split and GST-inclusive pricing are ready.
                   </p>
@@ -1670,7 +1733,7 @@ export default function Home() {
                 <div className="today-pill">
                   <span>Today</span>
                   <strong>{money(todaySales)}</strong>
-                  <small>{todayBills.length} confirmed bills</small>
+                  <small>{todayBills.length} confirmed orders</small>
                 </div>
               </div>
               <div className="search-with-action">
@@ -1738,7 +1801,7 @@ export default function Home() {
               <div className="cart-title">
                 <div>
                   <span className="eyebrow">Current order</span>
-                  <h2>GST bill summary</h2>
+                  <h2>Order booking slip</h2>
                 </div>
                 <span className="count-badge">
                   {cart.reduce((sum, item) => sum + item.qty, 0)}
@@ -1852,7 +1915,7 @@ export default function Home() {
                 {!cart.length && (
                   <div className="cart-empty">
                     <span>＋</span>
-                    <strong>Your bill is empty</strong>
+                    <strong>Your order is empty</strong>
                     <small>Tap a product or scan its QR code.</small>
                   </div>
                 )}
@@ -1897,7 +1960,7 @@ export default function Home() {
                 </label>
                 <div className="field-pair">
                   <label>
-                    Attending staff
+                    Order booking staff
                     <input
                       list="staff-list"
                       value={customer.staffName}
@@ -1915,37 +1978,24 @@ export default function Home() {
                     </datalist>
                   </label>
                   <label>
-                    Counter
+                    Accountant
                     <input
-                      list="counter-list"
-                      value={customer.counterName}
+                      list="staff-list"
+                      value={customer.accountantName}
                       onChange={(event) =>
                         setCustomer({
                           ...customer,
-                          counterName: event.target.value,
+                          accountantName: event.target.value,
                         })
                       }
                     />
-                    <datalist id="counter-list">
-                      {state.settings.counterNames.map((item) => (
-                        <option value={item} key={item} />
-                      ))}
-                    </datalist>
                   </label>
                 </div>
-                <label>
-                  Expected delivery
-                  <input
-                    type="date"
-                    value={customer.deliveryDate}
-                    onChange={(event) =>
-                      setCustomer({
-                        ...customer,
-                        deliveryDate: event.target.value,
-                      })
-                    }
-                  />
-                </label>
+                <div className="field-pair">
+                  <label>Manager<input list="staff-list" value={customer.managerName} onChange={(event) => setCustomer({ ...customer, managerName: event.target.value })} /></label>
+                  <label>Expected delivery<input type="date" value={customer.deliveryDate} onChange={(event) => setCustomer({ ...customer, deliveryDate: event.target.value })} required /></label>
+                </div>
+                <label>Order notes<textarea rows={2} value={customer.orderNotes} onChange={(event) => setCustomer({ ...customer, orderNotes: event.target.value })} placeholder="Transport extra, customization, advance terms…" /></label>
               </div>
               <div className="totals detailed">
                 <div>
@@ -2006,12 +2056,32 @@ export default function Home() {
                   <strong>{money(grandTotal)}</strong>
                 </div>
               </div>
+              <div className="charge-fields">
+                {paymentMode === "CARD" && (
+                  <label>
+                    Card charge (extra)
+                    <input type="number" min="0" value={cardCharge || ""} onChange={(event) => setCardCharge(Math.max(0, Number(event.target.value)))} />
+                  </label>
+                )}
+                <label>
+                  Transport charge
+                  <input type="number" min="0" value={transportCharge || ""} onChange={(event) => setTransportCharge(Math.max(0, Number(event.target.value)))} />
+                </label>
+                <label>
+                  Other charge
+                  <input type="number" min="0" value={otherCharge || ""} onChange={(event) => setOtherCharge(Math.max(0, Number(event.target.value)))} />
+                </label>
+              </div>
+              <div className="extra-total"><span>Extra charges</span><strong>{money(extraCharges)}</strong></div>
               <div className="pay-buttons">
-                {paymentModes.slice(0, 3).map((mode) => (
+                {paymentModes.map((mode) => (
                   <button
                     key={mode}
                     className={paymentMode === mode ? "active" : ""}
-                    onClick={() => setPaymentMode(mode)}
+                    onClick={() => {
+                      setPaymentMode(mode);
+                      if (mode !== "CARD") setCardCharge(0);
+                    }}
                   >
                     {mode}
                   </button>
@@ -2019,7 +2089,7 @@ export default function Home() {
               </div>
               <div className="payment-pair">
                 <label>
-                  Amount paid
+                  Advance
                   <input
                     type="number"
                     min="0"
@@ -2045,7 +2115,7 @@ export default function Home() {
                 disabled={!cart.length || busy || !online}
                 onClick={confirmBill}
               >
-                {busy ? "Syncing…" : "Confirm GST bill"}
+                {busy ? "Syncing…" : "Save order slip"}
                 <span>→</span>
               </button>
               <p className="stock-note">
@@ -2237,7 +2307,7 @@ export default function Home() {
               <div>
                 <span className="eyebrow">Sales history</span>
                 <h1>Bills, payments & balance.</h1>
-                <p>View, edit, print, export, share or cancel every invoice.</p>
+                <p>View, update, print, export, share or cancel every order.</p>
               </div>
               <button
                 className="secondary-action"
@@ -3031,7 +3101,7 @@ export default function Home() {
           <div className="modal-card invoice-modal">
             <div className="modal-head">
               <div>
-                <span className="eyebrow">GST Invoice</span>
+                <span className="eyebrow">Order booking slip</span>
                 <h2>{selectedBill.billNo}</h2>
               </div>
               <button onClick={() => setSelectedBill(null)}>×</button>
@@ -3051,17 +3121,21 @@ export default function Home() {
                 </small>
               </div>
               <div>
-                <span>Staff / Counter</span>
+                <span>Booking staff / Accountant</span>
                 <strong>
                   {selectedBill.staffName || "Unassigned"} ·{" "}
-                  {selectedBill.counterName || "—"}
+                  {selectedBill.accountantName || "—"}
                 </strong>
-                <small>{shortDate(selectedBill.createdAt)}</small>
+                <small>{selectedBill.managerName ? `Manager: ${selectedBill.managerName} · ` : ""}{shortDate(selectedBill.createdAt)}</small>
               </div>
             </div>
             <div className="invoice-items">
               {selectedBill.items.map((item, index) => (
                 <div key={`${item.code}-${index}`}>
+                  {(() => {
+                    const product = state.products.find((entry) => entry.id === item.productId || entry.code === item.code);
+                    return product ? <TableThumb product={product} /> : null;
+                  })()}
                   <div>
                     <strong>{item.name}</strong>
                     <small>
@@ -3109,12 +3183,15 @@ export default function Home() {
                 <span>SGST {state.settings.gstRate / 2}%</span>
                 <strong>{money(selectedBill.sgst)}</strong>
               </div>
+              {selectedBill.cardCharge > 0 && <div><span>Card charge</span><strong>{money(selectedBill.cardCharge)}</strong></div>}
+              {selectedBill.transportCharge > 0 && <div><span>Transport charge</span><strong>{money(selectedBill.transportCharge)}</strong></div>}
+              {selectedBill.otherCharge > 0 && <div><span>Other charge</span><strong>{money(selectedBill.otherCharge)}</strong></div>}
               <div className="grand-total">
                 <span>Grand total</span>
                 <strong>{money(selectedBill.grandTotal)}</strong>
               </div>
               <div>
-                <span>Paid</span>
+                <span>Advance / Paid</span>
                 <strong>{money(selectedBill.paidAmount)}</strong>
               </div>
               <div>
@@ -3125,12 +3202,16 @@ export default function Home() {
             <div className="delivery-inline">
               <span>Expected delivery</span>
               <strong>{selectedBill.deliveryDate || "Not set"}</strong>
-              <span
-                className={`delivery-status ${deliveryBucket(selectedBill)}`}
-              >
-                {deliveryLabel(deliveryBucket(selectedBill))}
-              </span>
+              {selectedBill.status !== "cancelled" ? (
+                <select value={selectedBill.deliveryStatus} onChange={async (event) => {
+                  const data = await mutate({ action: "setDeliveryStatus", id: selectedBill.id, deliveryStatus: event.target.value }, "Order status updated.");
+                  if (data) setSelectedBill(data.bills.find((bill) => bill.id === selectedBill.id) || null);
+                }}>
+                  {["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"].map((status) => <option key={status}>{status}</option>)}
+                </select>
+              ) : <span className="delivery-status cancelled">Cancelled</span>}
             </div>
+            {selectedBill.orderNotes && <div className="order-note"><strong>Order note</strong><span>{selectedBill.orderNotes}</span></div>}
             {selectedBill.paymentHistory.length > 0 && (
               <div className="payment-history">
                 <strong>Payment history</strong>
@@ -3212,9 +3293,15 @@ export default function Home() {
             <div className="modal-actions invoice-actions">
               <button
                 className="secondary-action"
-                onClick={() => printBill(selectedBill)}
+                onClick={() => printBill(selectedBill, "order")}
               >
-                Print / PDF
+                Print Order Slip
+              </button>
+              <button
+                className="secondary-action"
+                onClick={() => printBill(selectedBill, "invoice")}
+              >
+                Final GST Invoice
               </button>
               <button
                 className="secondary-action"
@@ -3291,7 +3378,7 @@ export default function Home() {
           >
             <div className="modal-head">
               <div>
-                <span className="eyebrow">Edit bill details</span>
+                <span className="eyebrow">Edit order details</span>
                 <h2>{editingBill.billNo}</h2>
               </div>
               <button type="button" onClick={() => setEditingBill(null)}>
@@ -3339,7 +3426,7 @@ export default function Home() {
                 />
               </label>
               <label>
-                Staff
+                Order booking staff
                 <input
                   value={editingBill.staffName}
                   onChange={(event) =>
@@ -3351,16 +3438,20 @@ export default function Home() {
                 />
               </label>
               <label>
-                Counter
+                Accountant
                 <input
-                  value={editingBill.counterName}
+                  value={editingBill.accountantName}
                   onChange={(event) =>
                     setEditingBill({
                       ...editingBill,
-                      counterName: event.target.value,
+                      accountantName: event.target.value,
                     })
                   }
                 />
+              </label>
+              <label>
+                Manager
+                <input value={editingBill.managerName} onChange={(event) => setEditingBill({ ...editingBill, managerName: event.target.value })} />
               </label>
               <label>
                 Expected delivery
@@ -3374,6 +3465,10 @@ export default function Home() {
                     })
                   }
                 />
+              </label>
+              <label className="wide">
+                Order notes
+                <textarea rows={2} value={editingBill.orderNotes} onChange={(event) => setEditingBill({ ...editingBill, orderNotes: event.target.value })} />
               </label>
             </div>
             <div className="modal-actions">
