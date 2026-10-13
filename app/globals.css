@@ -1076,3 +1076,115 @@ input,select,textarea { padding:12px 14px; border-radius:12px; font-size:14px; }
   .billing-progress > p { grid-column:1 / -1; }
   .mobile-bill-bar { bottom:calc(72px + env(safe-area-inset-bottom)); }
 }
+
+/* Operations upgrade: readable controls, resilient billing and CRM tools. */
+:root { --app-font:"Segoe UI Variable","Segoe UI",Arial,sans-serif; }
+:root[data-font="modern"] { --app-font:var(--font-geist-sans),"Segoe UI",Arial,sans-serif; }
+:root[data-font="classic"] { --app-font:Georgia,"Times New Roman",serif; }
+:root[data-font="friendly"] { --app-font:"Trebuchet MS","Segoe UI",Arial,sans-serif; }
+body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading h2,.product-copy h3,.cart-title h2,.metric-card strong,.brand-mark strong { font-family:var(--app-font) !important; }
+:root[data-text-scale="small"] body { font-size:13px; }
+:root[data-text-scale="normal"] body { font-size:14px; }
+:root[data-text-scale="large"] body { font-size:16px; }
+:root[data-text-scale="large"] button,:root[data-text-scale="large"] input,:root[data-text-scale="large"] select,:root[data-text-scale="large"] textarea { font-size:15px; }
+:root[data-text-scale="large"] .block-muted,:root[data-text-scale="large"] small { font-size:max(11px,.72em); }
+
+.sidebar-help { flex:0 0 auto; min-height:44px; margin:4px 0 0; padding:0 12px; border:1px solid rgba(255,255,255,.12); border-radius:11px; background:rgba(255,255,255,.06); color:#e4d8cf; text-align:left; cursor:pointer; }
+.billing-progress-summary { display:grid; justify-items:end; gap:6px; }
+.billing-progress-summary > p { margin:0; color:var(--ink); font-size:12px; font-weight:800; white-space:nowrap; }
+.billing-progress-summary > p em { display:block; color:var(--success); font-size:9px; font-style:normal; text-align:right; }
+.billing-progress-summary > div { display:flex; gap:6px; }
+.billing-progress-summary button { min-height:34px !important; padding:5px 9px !important; border:1px solid var(--line); border-radius:9px !important; background:var(--surface) !important; color:var(--ink) !important; font-size:10px !important; cursor:pointer; }
+.billing-progress-summary button b { display:inline-grid; min-width:18px; min-height:18px; place-items:center; margin-left:3px; border-radius:999px; background:var(--clay); color:white; }
+.restore-notice,.save-error { display:grid; grid-template-columns:34px 1fr auto; align-items:center; gap:10px; padding:12px; border:1px solid color-mix(in srgb,var(--success) 30%,var(--line)); border-radius:13px; background:color-mix(in srgb,var(--success) 8%,var(--surface)); }
+.restore-notice > span,.save-error > span { width:32px; height:32px; display:grid; place-items:center; border-radius:10px; background:var(--surface); color:var(--success); font-weight:900; }
+.restore-notice div,.save-error div { display:grid; gap:2px; }
+.restore-notice small,.save-error small { color:var(--muted); line-height:1.4; }
+.restore-notice button,.save-error button { min-height:38px; padding:0 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); cursor:pointer; }
+.save-error { border-color:color-mix(in srgb,var(--danger) 35%,var(--line)); background:color-mix(in srgb,var(--danger) 8%,var(--surface)); }
+.save-error > span { color:var(--danger); }
+
+.delivery-calendar { margin-bottom:var(--ui-section-gap); padding:var(--ui-card-pad); border:1px solid var(--line); border-radius:var(--ui-radius); background:var(--surface); box-shadow:var(--shadow); }
+.delivery-calendar .card-heading > label { display:grid; gap:6px; color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; }
+.calendar-weekdays,.calendar-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); }
+.calendar-weekdays { border:1px solid var(--line); border-bottom:0; border-radius:12px 12px 0 0; overflow:hidden; background:var(--paper); }
+.calendar-weekdays span { padding:9px; color:var(--muted); font-size:10px; font-weight:850; text-align:center; text-transform:uppercase; }
+.calendar-grid { border-left:1px solid var(--line); border-top:1px solid var(--line); }
+.calendar-day { min-height:116px; padding:9px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--surface); }
+.calendar-day.empty { background:color-mix(in srgb,var(--paper) 70%,var(--surface)); }
+.calendar-day > b { width:27px; height:27px; display:grid; place-items:center; border-radius:8px; font-size:11px; }
+.calendar-day.today > b { background:var(--clay); color:white; }
+.calendar-day > div { display:grid; gap:4px; margin-top:5px; }
+.calendar-day button { min-height:0; padding:6px; border:0; border-radius:8px; background:color-mix(in srgb,var(--clay) 9%,var(--surface)); color:var(--ink); text-align:left; cursor:pointer; }
+.calendar-day button span,.calendar-day button small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.calendar-day button span { font-size:10px; font-weight:800; }
+.calendar-day button small { color:var(--muted); font-size:8px; }
+
+.job-card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:var(--ui-card-gap); }
+.job-card { display:grid; gap:16px; padding:var(--ui-card-pad); border:1px solid var(--line); border-radius:var(--ui-radius); background:var(--surface); box-shadow:var(--shadow); }
+.job-card header,.job-card footer { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.job-card header div { display:grid; gap:3px; }
+.job-card header span { color:var(--clay); font-size:10px; font-weight:850; letter-spacing:.08em; }
+.job-card h3 { margin:0; font-size:20px; }
+.job-card header small,.job-card footer small,.job-card p { color:var(--muted); }
+.job-card header em { padding:7px 10px; border-radius:999px; background:color-mix(in srgb,var(--success) 12%,var(--surface)); color:var(--success); font-size:10px; font-style:normal; font-weight:850; white-space:nowrap; }
+.job-specs { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.job-specs span { display:grid; gap:3px; padding:10px; border-radius:11px; background:var(--paper); }
+.job-specs small { color:var(--muted); font-size:9px; text-transform:uppercase; }
+.job-specs b { font-size:12px; overflow-wrap:anywhere; }
+.job-images { display:flex; gap:8px; overflow:auto; }
+.job-images img { width:70px; height:60px; flex:0 0 auto; border-radius:10px; object-fit:cover; border:1px solid var(--line); }
+.job-card p { min-height:38px; margin:0; font-size:12px; line-height:1.55; }
+.lead-status { display:inline-flex; padding:6px 9px; border-radius:999px; background:var(--paper); font-size:10px; font-weight:800; }
+.lead-status.won { background:#e0f2e8; color:#17643e; }
+.lead-status.lost { background:#f4e2df; color:#913d34; }
+
+.readability-controls { display:grid; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px; }
+.readability-controls label { display:grid; gap:7px; color:var(--muted); font-size:11px; font-weight:800; }
+.held-orders-modal,.shortcuts-modal { max-width:760px; }
+.held-order-list { max-height:58vh; overflow:auto; display:grid; gap:10px; }
+.held-order-list article { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:14px; padding:14px; border:1px solid var(--line); border-radius:13px; background:var(--paper); }
+.held-order-list article > div:first-child { display:grid; gap:3px; }
+.held-order-list small { color:var(--muted); }
+.shortcut-list { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.shortcut-list span { display:flex; align-items:center; gap:12px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
+.shortcut-list kbd { min-width:105px; padding:7px 9px; border:1px solid var(--line); border-bottom-width:3px; border-radius:8px; background:var(--surface); color:var(--clay); font-size:10px; font-weight:850; text-align:center; }
+.shortcut-list b { font-size:12px; }
+.job-card-modal,.stock-verification-modal { max-width:980px; }
+.stock-check-meta { display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-bottom:14px; }
+.stock-check-meta label { display:grid; gap:6px; color:var(--muted); font-size:11px; font-weight:800; }
+.stock-count-list { max-height:55vh; overflow:auto; border:1px solid var(--line); border-radius:13px; }
+.stock-count-list > header,.stock-count-list > div { display:grid; grid-template-columns:minmax(220px,1fr) 80px 110px 90px; align-items:center; gap:10px; padding:10px 14px; border-top:1px solid var(--line); }
+.stock-count-list > header { position:sticky; top:0; z-index:1; border-top:0; background:var(--ink); color:white; font-size:10px; font-weight:850; text-transform:uppercase; }
+.stock-count-list > div:first-of-type { border-top:0; }
+.stock-count-list > div > span { display:grid; gap:2px; }
+.stock-count-list small { color:var(--muted); }
+.stock-count-list input { width:100%; }
+.stock-count-list em { color:var(--muted); font-style:normal; font-weight:850; text-align:center; }
+.stock-count-list em.changed { color:var(--danger); }
+
+@media (max-width:900px) {
+  .billing-progress-summary { grid-column:1 / -1; grid-template-columns:1fr auto; align-items:center; justify-items:stretch; }
+  .billing-progress-summary > p em { display:inline; margin-left:6px; }
+  .billing-progress-summary > div { justify-content:flex-end; }
+  .calendar-day { min-height:88px; padding:5px; }
+  .calendar-day button small { display:none; }
+  .calendar-day button span { font-size:8px; }
+  .readability-controls { grid-template-columns:1fr; }
+}
+@media (max-width:620px) {
+  .billing-progress-summary { display:grid; grid-template-columns:1fr; gap:8px; }
+  .billing-progress-summary > div { display:grid; grid-template-columns:1fr 1fr 44px; }
+  .billing-progress-summary button { min-height:40px !important; }
+  .calendar-weekdays span { padding:6px 2px; font-size:8px; }
+  .calendar-day { min-height:64px; }
+  .calendar-day > b { width:22px; height:22px; }
+  .calendar-day button { padding:4px; }
+  .calendar-day button span { max-width:100%; }
+  .shortcut-list { grid-template-columns:1fr; }
+  .held-order-list article { grid-template-columns:1fr; }
+  .stock-check-meta { grid-template-columns:1fr; }
+  .stock-count-list > header,.stock-count-list > div { grid-template-columns:minmax(140px,1fr) 52px 78px 62px; padding:8px; gap:6px; }
+  .stock-count-list > header { font-size:8px; }
+  .job-card-grid { grid-template-columns:1fr; }
+}

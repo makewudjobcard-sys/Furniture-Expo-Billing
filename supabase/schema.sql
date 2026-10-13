@@ -148,11 +148,64 @@ create table if not exists public.audit_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.leads (
+  id text primary key,
+  customer_name text not null,
+  phone text not null default '',
+  source text not null default 'Walk-in',
+  interest text not null default '',
+  assigned_to text not null default '',
+  follow_up_date text not null default '',
+  status text not null default 'New',
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.job_cards (
+  id text primary key,
+  job_no text not null unique,
+  customer_name text not null,
+  phone text not null default '',
+  bill_id text not null default '',
+  measurements text not null default '',
+  wood_material text not null default '',
+  fabric text not null default '',
+  foam text not null default '',
+  polish text not null default '',
+  reference_images_json text not null default '[]',
+  estimated_cost double precision not null default 0,
+  assigned_to text not null default '',
+  expected_date text not null default '',
+  stage text not null default 'New',
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.held_orders (
+  id text primary key,
+  name text not null,
+  payload_json text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.stock_verifications (
+  id text primary key,
+  checked_by text not null default '',
+  notes text not null default '',
+  lines_json text not null default '[]',
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_products_category on public.products(category);
 create index if not exists idx_bills_created_at on public.bills(created_at desc);
 create index if not exists idx_bills_delivery_date on public.bills(delivery_date);
 create unique index if not exists idx_bills_client_request_id on public.bills(client_request_id) where client_request_id <> '';
 create index if not exists idx_audit_logs_created_at on public.audit_logs(created_at desc);
+create index if not exists idx_leads_follow_up on public.leads(follow_up_date);
+create index if not exists idx_job_cards_expected on public.job_cards(expected_date);
 
 create or replace function public.furniture_bill_stock_guard()
 returns trigger language plpgsql security definer set search_path = public as $$

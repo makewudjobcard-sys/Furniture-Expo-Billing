@@ -37,3 +37,27 @@ test("keeps credentials server-side and protects cloud workflows", async () => {
   assert.doesNotMatch(auth, /EX2026/);
   assert.doesNotMatch(envExample, /EX2026/);
 });
+
+test("includes showroom CRM, resilient billing, stock checks and production workflows", async () => {
+  const [page, expo, schema] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/expo/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /Marketing & leads/);
+  assert.match(page, /Custom furniture job card/i);
+  assert.match(page, /Verify physical stock/);
+  assert.match(page, /Held bills/);
+  assert.match(page, /Keyboard shortcuts/);
+  assert.match(page, /WhatsApp invoice/);
+  assert.match(page, /Delivery month at a glance/);
+  assert.match(page, /Retry save/);
+  assert.match(expo, /Order saved but follow-up automation failed/);
+  assert.match(expo, /Primary action saved but audit logging failed/);
+  assert.match(expo, /type='Happy Call'/);
+  assert.match(schema, /create table if not exists public\.leads/i);
+  assert.match(schema, /create table if not exists public\.job_cards/i);
+  assert.match(schema, /create table if not exists public\.held_orders/i);
+  assert.match(schema, /create table if not exists public\.stock_verifications/i);
+});

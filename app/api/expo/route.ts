@@ -18,6 +18,8 @@ type SupplierInput = { id?: string; name?: string; contactPerson?: string; phone
 type TaskInput = { id?: string; category?: string; title?: string; details?: string; assignedTo?: string; dueDate?: string; priority?: string; status?: string; linkedBillId?: string; linkedCustomerPhone?: string };
 type InteractionInput = { id?: string; customerName?: string; customerPhone?: string; type?: string; details?: string; assignedTo?: string; nextFollowUp?: string; status?: string; billId?: string };
 type AssignmentInput = { id?: string; billId?: string; billNo?: string; productId?: string; productCode?: string; productName?: string; qty?: number; supplierId?: string; purchaseCost?: number; advancePaid?: number; expectedDate?: string; status?: string; notes?: string };
+type LeadInput = { id?: string; customerName?: string; phone?: string; source?: string; interest?: string; assignedTo?: string; followUpDate?: string; status?: string; notes?: string };
+type JobCardInput = { id?: string; jobNo?: string; customerName?: string; phone?: string; billId?: string; measurements?: string; woodMaterial?: string; fabric?: string; foam?: string; polish?: string; referenceImages?: string[]; estimatedCost?: number; assignedTo?: string; expectedDate?: string; stage?: string; notes?: string };
 
 const SAMPLE_PRODUCTS: ProductInput[] = [
   { code: "SOFA-001", hsnCode: "94016100", name: "3 Seater Fabric Sofa", category: "Sofa", size: "3 Seater", price: 55000, stockQty: 2, mrp: 65000 },
@@ -51,11 +53,37 @@ async function ensureSchema() {
   const db = env.DB;
   if (db.dialect === "postgres") {
     await db.ensureSchema();
-    await db.prepare(`CREATE TABLE IF NOT EXISTS audit_logs (
+    await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '',
       entity_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`).run();
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS leads (
+      id TEXT PRIMARY KEY, customer_name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'Walk-in',
+      interest TEXT NOT NULL DEFAULT '', assigned_to TEXT NOT NULL DEFAULT '', follow_up_date TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'New', notes TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS job_cards (
+      id TEXT PRIMARY KEY, job_no TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '',
+      bill_id TEXT NOT NULL DEFAULT '', measurements TEXT NOT NULL DEFAULT '', wood_material TEXT NOT NULL DEFAULT '',
+      fabric TEXT NOT NULL DEFAULT '', foam TEXT NOT NULL DEFAULT '', polish TEXT NOT NULL DEFAULT '',
+      reference_images_json TEXT NOT NULL DEFAULT '[]', estimated_cost REAL NOT NULL DEFAULT 0,
+      assigned_to TEXT NOT NULL DEFAULT '', expected_date TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT 'New',
+      notes TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS held_orders (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS stock_verifications (
+      id TEXT PRIMARY KEY, checked_by TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL DEFAULT '[]',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_leads_follow_up ON leads(follow_up_date)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
+    ]);
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)").run();
     await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Smaarthome Furniture','Showroom Billing & Operations',18,'SHF')`).run();
     await db.prepare(`UPDATE settings SET business_name='Smaarthome Furniture',subtitle='Showroom Billing & Operations',bill_prefix=CASE WHEN bill_prefix='EXP' THEN 'SHF' ELSE bill_prefix END WHERE business_name='Furniture Expo'`).run();
@@ -101,9 +129,33 @@ async function ensureSchema() {
       entity_id TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS leads (
+      id TEXT PRIMARY KEY, customer_name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'Walk-in',
+      interest TEXT NOT NULL DEFAULT '', assigned_to TEXT NOT NULL DEFAULT '', follow_up_date TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'New', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS job_cards (
+      id TEXT PRIMARY KEY, job_no TEXT NOT NULL UNIQUE, customer_name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '',
+      bill_id TEXT NOT NULL DEFAULT '', measurements TEXT NOT NULL DEFAULT '', wood_material TEXT NOT NULL DEFAULT '',
+      fabric TEXT NOT NULL DEFAULT '', foam TEXT NOT NULL DEFAULT '', polish TEXT NOT NULL DEFAULT '',
+      reference_images_json TEXT NOT NULL DEFAULT '[]', estimated_cost REAL NOT NULL DEFAULT 0,
+      assigned_to TEXT NOT NULL DEFAULT '', expected_date TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT 'New',
+      notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS held_orders (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS stock_verifications (
+      id TEXT PRIMARY KEY, checked_by TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at DESC)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_leads_follow_up ON leads(follow_up_date)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
   ]);
 
   const additions: Array<["products" | "bills" | "settings", string, string]> = [
@@ -173,7 +225,7 @@ function productUpsertStatement(input: ProductInput) {
 }
 
 async function readState() {
-  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows] = await Promise.all([
+  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows, leadRows, jobRows, heldRows, verificationRows] = await Promise.all([
     env.DB.prepare(`SELECT id,code,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
       stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ORDER BY category,name`).all(),
     env.DB.prepare(`SELECT id,bill_no AS billNo,customer_name AS customerName,customer_phone AS customerPhone,
@@ -182,7 +234,7 @@ async function readState() {
       transport_charge AS transportCharge,other_charge AS otherCharge,subtotal,discount_type AS discountType,
       discount_value AS discountValue,discount,taxable_value AS taxableValue,cgst,sgst,gst,grand_total AS grandTotal,
       paid_amount AS paidAmount,balance_amount AS balanceAmount,payment_mode AS paymentMode,
-      payment_history_json AS paymentHistoryJson,delivery_date AS deliveryDate,delivery_status AS deliveryStatus,
+      payment_history_json AS paymentHistoryJson,client_request_id AS clientRequestId,delivery_date AS deliveryDate,delivery_status AS deliveryStatus,
       delivered_at AS deliveredAt,order_notes AS orderNotes,accountant_name AS accountantName,
       manager_name AS managerName,document_type AS documentType,status,created_at AS createdAt
       FROM bills ORDER BY created_at DESC LIMIT 1000`).all(),
@@ -203,6 +255,17 @@ async function readState() {
       FROM supplier_assignments ORDER BY CASE status WHEN 'Closed' THEN 1 ELSE 0 END,expected_date,created_at DESC`).all(),
     env.DB.prepare(`SELECT id,action,entity_type AS entityType,entity_id AS entityId,summary,created_at AS createdAt
       FROM audit_logs ORDER BY created_at DESC LIMIT 250`).all(),
+    env.DB.prepare(`SELECT id,customer_name AS customerName,phone,source,interest,assigned_to AS assignedTo,
+      follow_up_date AS followUpDate,status,notes,created_at AS createdAt,updated_at AS updatedAt
+      FROM leads ORDER BY CASE status WHEN 'Won' THEN 2 WHEN 'Lost' THEN 2 ELSE 0 END,follow_up_date,created_at DESC`).all(),
+    env.DB.prepare(`SELECT id,job_no AS jobNo,customer_name AS customerName,phone,bill_id AS billId,measurements,
+      wood_material AS woodMaterial,fabric,foam,polish,reference_images_json AS referenceImagesJson,
+      estimated_cost AS estimatedCost,assigned_to AS assignedTo,expected_date AS expectedDate,stage,notes,
+      created_at AS createdAt,updated_at AS updatedAt FROM job_cards ORDER BY expected_date,created_at DESC`).all(),
+    env.DB.prepare(`SELECT id,name,payload_json AS payloadJson,created_at AS createdAt,updated_at AS updatedAt
+      FROM held_orders ORDER BY updated_at DESC`).all(),
+    env.DB.prepare(`SELECT id,checked_by AS checkedBy,notes,lines_json AS linesJson,created_at AS createdAt
+      FROM stock_verifications ORDER BY created_at DESC LIMIT 50`).all(),
   ]);
   const products = productRows.results.map((row: Record<string, unknown>) => ({ ...row, imageUrl: row.imageKey ? `/api/images/${encodeURIComponent(String(row.imageKey))}` : "" }));
   const gstRate = Number((settingRow as Record<string, unknown> | null)?.gstRate ?? 18);
@@ -248,6 +311,10 @@ async function readState() {
     interactions: interactionRows.results,
     supplierAssignments: assignmentRows.results,
     auditLogs: auditRows.results,
+    leads: leadRows.results,
+    jobCards: jobRows.results.map((row: Record<string, unknown>) => ({ ...row, referenceImages: safeJson(row.referenceImagesJson, []), referenceImagesJson: undefined })),
+    heldOrders: heldRows.results.map((row: Record<string, unknown>) => ({ ...row, payload: safeJson(row.payloadJson, {}), payloadJson: undefined })),
+    stockVerifications: verificationRows.results.map((row: Record<string, unknown>) => ({ ...row, lines: safeJson(row.linesJson, []), linesJson: undefined })),
     syncedAt: new Date().toISOString(),
   };
 }
@@ -257,22 +324,33 @@ function auditDescription(action: string, payload: Record<string, unknown>) {
   const product = (payload.product || {}) as Record<string, unknown>;
   const task = (payload.task || {}) as Record<string, unknown>;
   const interaction = (payload.interaction || {}) as Record<string, unknown>;
+  const lead = (payload.lead || {}) as Record<string, unknown>;
+  const jobCard = (payload.jobCard || {}) as Record<string, unknown>;
+  const heldOrder = (payload.heldOrder || {}) as Record<string, unknown>;
   const labels: Record<string, string> = {
     createBill: `Order saved for ${clean(bill.customerName, "customer")}`,
-    updateBill: `Order details updated`, addPayment: `Payment recorded`, cancelBill: `Order cancelled`,
+    updateBill: `Order details updated`, updateBillDetails: `Order details updated`, removeBillItem: `Product removed from order`, addPayment: `Payment recorded`, cancelBill: `Order cancelled`,
     setDelivery: `Delivery completion changed`, setDeliveryStatus: `Delivery moved to ${clean(payload.deliveryStatus, "new status")}`,
     saveProduct: `Product ${clean(product.code)} saved`, deleteProduct: `Product removed`, adjustStock: `Stock quantity adjusted`,
     saveTask: `Task ${clean(task.title)} saved`, deleteTask: `Task removed`,
     saveInteraction: `${clean(interaction.type, "Customer activity")} saved`, deleteInteraction: `Customer activity removed`,
     saveSupplier: `Supplier saved`, deleteSupplier: `Supplier removed`, saveSupplierAssignments: `Supplier assignment updated`,
     deleteSupplierAssignment: `Supplier assignment removed`, saveSettings: `Showroom settings updated`,
+    saveLead: `Lead ${clean(lead.customerName, "customer")} saved`, deleteLead: `Lead removed`,
+    saveJobCard: `Job card ${clean(jobCard.jobNo, "custom work")} saved`, deleteJobCard: `Job card removed`,
+    saveHeldOrder: `Bill held as ${clean(heldOrder.name, "draft")}`, deleteHeldOrder: `Held bill removed`,
+    saveStockVerification: `Physical stock verification completed`,
   };
   const entityType = action.toLowerCase().includes("bill") || action.startsWith("setDelivery") || action === "addPayment" ? "order"
     : action.toLowerCase().includes("product") || action === "adjustStock" ? "product"
       : action.toLowerCase().includes("task") ? "task"
         : action.toLowerCase().includes("interaction") ? "customer"
+          : action.toLowerCase().includes("lead") ? "lead"
+            : action.toLowerCase().includes("jobcard") ? "job-card"
+              : action.toLowerCase().includes("heldorder") ? "held-order"
+                : action === "saveStockVerification" ? "stock-check"
           : action.toLowerCase().includes("supplier") ? "supplier" : "settings";
-  const entityId = clean(payload.id) || clean(bill.id) || clean(product.id) || clean(task.id) || clean(interaction.id);
+  const entityId = clean(payload.id) || clean(bill.id) || clean(product.id) || clean(task.id) || clean(interaction.id) || clean(lead.id) || clean(jobCard.id) || clean(heldOrder.id);
   return { entityType, entityId, summary: labels[action] || `${action} completed` };
 }
 
@@ -408,7 +486,11 @@ export async function POST(request: Request) {
         (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
         .bind(uid("task"), "Financial", `Collect ${moneyForTask(balanceAmount)} balance · ${billNo}`, "Collect the pending amount before delivery.", clean(bill.accountantName), deliveryDate || followUpDate, "High", "Pending", billId, customerPhone));
-      await env.DB.batch(followUpStatements);
+      try {
+        await env.DB.batch(followUpStatements);
+      } catch (automationError) {
+        console.error("Order saved but follow-up automation failed", automationError);
+      }
     } else if (action === "cancelBill") {
       await env.DB.prepare("UPDATE bills SET status='cancelled' WHERE id=? AND status<>'cancelled'").bind(clean(payload.id)).run();
     } else if (action === "addPayment") {
@@ -535,14 +617,46 @@ export async function POST(request: Request) {
       await env.DB.batch(statements);
     } else if (action === "setDelivery") {
       const delivered = Boolean(payload.delivered);
+      const billId = clean(payload.id);
       await env.DB.prepare("UPDATE bills SET delivery_status=?,delivered_at=? WHERE id=? AND status<>'cancelled'")
-        .bind(delivered ? "Delivered" : "Pending", delivered ? new Date().toISOString() : "", clean(payload.id)).run();
+        .bind(delivered ? "Delivered" : "Pending", delivered ? new Date().toISOString() : "", billId).run();
+      if (delivered) {
+        const deliveredBill = await env.DB.prepare("SELECT customer_name AS customerName,customer_phone AS customerPhone,staff_name AS staffName,bill_no AS billNo FROM bills WHERE id=?")
+          .bind(billId).first<Record<string, unknown>>();
+        const existingHappyCall = await env.DB.prepare("SELECT id FROM customer_interactions WHERE bill_id=? AND type='Happy Call' LIMIT 1").bind(billId).first();
+        if (deliveredBill && !existingHappyCall) {
+          const followUp = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+          await env.DB.prepare(`INSERT INTO customer_interactions
+            (id,customer_name,customer_phone,type,details,assigned_to,next_follow_up,status,bill_id,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+            .bind(uid("crm"), clean(deliveredBill.customerName), clean(deliveredBill.customerPhone), "Happy Call",
+              `Confirm delivery satisfaction, product condition and service needs for ${clean(deliveredBill.billNo)}.`,
+              clean(deliveredBill.staffName), followUp, "Open", billId).run();
+        }
+      }
     } else if (action === "setDeliveryStatus") {
       const allowed = new Set(["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"]);
       const deliveryStatus = clean(payload.deliveryStatus);
       if (!allowed.has(deliveryStatus)) return Response.json({ error: "Choose a valid order status." }, { status: 400 });
       await env.DB.prepare("UPDATE bills SET delivery_status=?,delivered_at=? WHERE id=? AND status<>'cancelled'")
         .bind(deliveryStatus, deliveryStatus === "Delivered" ? new Date().toISOString() : "", clean(payload.id)).run();
+      if (deliveryStatus === "Delivered") {
+        const billId = clean(payload.id);
+        const deliveredBill = await env.DB.prepare("SELECT customer_name AS customerName,customer_phone AS customerPhone,staff_name AS staffName,bill_no AS billNo FROM bills WHERE id=?")
+          .bind(billId).first<Record<string, unknown>>();
+        if (deliveredBill) {
+          const existingHappyCall = await env.DB.prepare("SELECT id FROM customer_interactions WHERE bill_id=? AND type='Happy Call' LIMIT 1").bind(billId).first();
+          if (!existingHappyCall) {
+            const followUp = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+            await env.DB.prepare(`INSERT INTO customer_interactions
+              (id,customer_name,customer_phone,type,details,assigned_to,next_follow_up,status,bill_id,updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+              .bind(uid("crm"), clean(deliveredBill.customerName), clean(deliveredBill.customerPhone), "Happy Call",
+                `Confirm delivery satisfaction, product condition and service needs for ${clean(deliveredBill.billNo)}.`,
+                clean(deliveredBill.staffName), followUp, "Open", billId).run();
+          }
+        }
+      }
     } else if (action === "saveSupplier") {
       const value = payload.supplier as SupplierInput;
       if (!clean(value?.name) || !clean(value?.phone)) return Response.json({ error: "Supplier name and phone are required." }, { status: 400 });
@@ -611,6 +725,64 @@ export async function POST(request: Request) {
       }));
     } else if (action === "deleteSupplierAssignment") {
       await env.DB.prepare("DELETE FROM supplier_assignments WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveLead") {
+      const value = payload.lead as LeadInput;
+      if (!clean(value?.customerName) || !clean(value?.phone)) return Response.json({ error: "Lead name and phone are required." }, { status: 400 });
+      const id = clean(value.id) || uid("lead");
+      await env.DB.prepare(`INSERT INTO leads
+        (id,customer_name,phone,source,interest,assigned_to,follow_up_date,status,notes,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET customer_name=excluded.customer_name,phone=excluded.phone,source=excluded.source,
+        interest=excluded.interest,assigned_to=excluded.assigned_to,follow_up_date=excluded.follow_up_date,
+        status=excluded.status,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, clean(value.customerName), clean(value.phone), clean(value.source, "Walk-in"), clean(value.interest),
+          clean(value.assignedTo), clean(value.followUpDate), clean(value.status, "New"), clean(value.notes)).run();
+    } else if (action === "deleteLead") {
+      await env.DB.prepare("DELETE FROM leads WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveJobCard") {
+      const value = payload.jobCard as JobCardInput;
+      if (!clean(value?.customerName)) return Response.json({ error: "Job card customer name is required." }, { status: 400 });
+      const id = clean(value.id) || uid("job");
+      let jobNo = clean(value.jobNo).toUpperCase();
+      if (!jobNo) {
+        const next = await env.DB.prepare("SELECT COUNT(*) AS count FROM job_cards").first<{ count: number }>();
+        jobNo = `JOB-${String(Number(next?.count || 0) + 1).padStart(4, "0")}`;
+      }
+      await env.DB.prepare(`INSERT INTO job_cards
+        (id,job_no,customer_name,phone,bill_id,measurements,wood_material,fabric,foam,polish,reference_images_json,
+        estimated_cost,assigned_to,expected_date,stage,notes,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET job_no=excluded.job_no,customer_name=excluded.customer_name,phone=excluded.phone,
+        bill_id=excluded.bill_id,measurements=excluded.measurements,wood_material=excluded.wood_material,fabric=excluded.fabric,
+        foam=excluded.foam,polish=excluded.polish,reference_images_json=excluded.reference_images_json,
+        estimated_cost=excluded.estimated_cost,assigned_to=excluded.assigned_to,expected_date=excluded.expected_date,
+        stage=excluded.stage,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, jobNo, clean(value.customerName), clean(value.phone), clean(value.billId), clean(value.measurements),
+          clean(value.woodMaterial), clean(value.fabric), clean(value.foam), clean(value.polish),
+          JSON.stringify(cleanList(value.referenceImages)), round2(numeric(value.estimatedCost)), clean(value.assignedTo),
+          clean(value.expectedDate), clean(value.stage, "New"), clean(value.notes)).run();
+    } else if (action === "deleteJobCard") {
+      await env.DB.prepare("DELETE FROM job_cards WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveHeldOrder") {
+      const value = payload.heldOrder as Record<string, unknown>;
+      const id = clean(value?.id) || uid("hold");
+      const name = clean(value?.name, `Held bill ${new Date().toISOString().slice(0, 16).replace("T", " ")}`);
+      if (!value?.payload || typeof value.payload !== "object") return Response.json({ error: "There is no bill data to hold." }, { status: 400 });
+      await env.DB.prepare(`INSERT INTO held_orders (id,name,payload_json,updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,payload_json=excluded.payload_json,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, name, JSON.stringify(value.payload)).run();
+    } else if (action === "deleteHeldOrder") {
+      await env.DB.prepare("DELETE FROM held_orders WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveStockVerification") {
+      const lines = Array.isArray(payload.lines) ? payload.lines as Array<Record<string, unknown>> : [];
+      const valid = lines.map((line) => ({
+        productId: clean(line.productId), code: clean(line.code), name: clean(line.name),
+        systemQty: whole(line.systemQty), countedQty: whole(line.countedQty),
+      })).filter((line) => line.productId);
+      if (!valid.length) return Response.json({ error: "Enter at least one physical stock count." }, { status: 400 });
+      await env.DB.batch(valid.map((line) => env.DB.prepare("UPDATE products SET stock_qty=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(line.countedQty, line.productId)));
+      await env.DB.prepare("INSERT INTO stock_verifications (id,checked_by,notes,lines_json) VALUES (?,?,?,?)")
+        .bind(uid("stock-check"), clean(payload.checkedBy), clean(payload.notes), JSON.stringify(valid)).run();
     } else if (action === "importLegacySnapshot") {
       const snapshot = payload.snapshot as Record<string, unknown>;
       const products = Array.isArray(snapshot?.products) ? snapshot.products as ProductInput[] : [];
@@ -724,9 +896,13 @@ export async function POST(request: Request) {
       return Response.json({ error: "Unknown action." }, { status: 400 });
     }
     if (!new Set(["importLegacySnapshot", "resetDemoWorkspace"]).has(action)) {
-      const audit = auditDescription(action, payload);
-      await env.DB.prepare(`INSERT INTO audit_logs (id,action,entity_type,entity_id,summary,created_at)
-        VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(uid("audit"), action, audit.entityType, audit.entityId, audit.summary).run();
+      try {
+        const audit = auditDescription(action, payload);
+        await env.DB.prepare(`INSERT INTO audit_logs (id,action,entity_type,entity_id,summary,created_at)
+          VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)`).bind(uid("audit"), action, audit.entityType, audit.entityId, audit.summary).run();
+      } catch (auditError) {
+        console.error("Primary action saved but audit logging failed", auditError);
+      }
     }
     return Response.json(await readState());
   } catch (error) {

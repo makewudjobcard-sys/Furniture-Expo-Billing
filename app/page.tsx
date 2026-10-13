@@ -69,6 +69,7 @@ type BillItem = {
 type Bill = {
   id: string;
   billNo: string;
+  clientRequestId?: string;
   customerName: string;
   customerPhone: string;
   customerAddress: string;
@@ -128,6 +129,35 @@ type AuditLog = {
   id: string; action: string; entityType: string; entityId: string;
   summary: string; createdAt: string;
 };
+type Lead = {
+  id: string; customerName: string; phone: string; source: string; interest: string;
+  assignedTo: string; followUpDate: string; status: string; notes: string;
+  createdAt: string; updatedAt: string;
+};
+type JobCard = {
+  id: string; jobNo: string; customerName: string; phone: string; billId: string;
+  measurements: string; woodMaterial: string; fabric: string; foam: string; polish: string;
+  referenceImages: string[]; estimatedCost: number; assignedTo: string;
+  expectedDate: string; stage: string; notes: string; createdAt: string; updatedAt: string;
+};
+type HeldOrder = {
+  id: string; name: string; payload: BillingDraft; createdAt: string; updatedAt: string;
+};
+type StockVerification = {
+  id: string; checkedBy: string; notes: string;
+  lines: Array<{ productId: string; code: string; name: string; systemQty: number; countedQty: number }>;
+  createdAt: string;
+};
+type BillingDraft = {
+  cart: CartItem[];
+  customer: {
+    name: string; phone: string; address: string; staffName: string; counterName: string;
+    deliveryDate: string; accountantName: string; managerName: string; orderNotes: string;
+  };
+  billingStep: 1 | 2 | 3;
+  discountType: "amount" | "percent"; discountValue: number; paidAmount: number;
+  paymentMode: string; cardCharge: number; transportCharge: number; otherCharge: number;
+};
 type ExpoSettings = {
   businessName: string;
   subtitle: string;
@@ -150,6 +180,10 @@ type ExpoState = {
   interactions: CustomerInteraction[];
   supplierAssignments: SupplierAssignment[];
   auditLogs: AuditLog[];
+  leads: Lead[];
+  jobCards: JobCard[];
+  heldOrders: HeldOrder[];
+  stockVerifications: StockVerification[];
   syncedAt: string;
 };
 type ReportData = {
@@ -171,6 +205,8 @@ type DashboardAction = {
 };
 type ThemeName = "teak" | "forest" | "light" | "midnight" | "ocean" | "rose";
 type DensityName = "comfortable" | "compact";
+type FontName = "system" | "modern" | "classic" | "friendly";
+type TextScaleName = "small" | "normal" | "large";
 
 const EMPTY_PRODUCT = {
   id: "",
@@ -237,6 +273,9 @@ const themes: Array<{ id: ThemeName; label: string; colors: string[] }> = [
   { id: "rose", label: "Soft Rose", colors: ["#4a2635", "#fff8fa", "#bf5d7a"] },
 ];
 const palette = ["clay", "sage", "sand", "ink", "ochre", "rose"];
+const leadSources = ["Walk-in", "Instagram", "Google", "Referral", "WhatsApp", "Facebook", "Other"];
+const leadStatuses = ["New", "Contacted", "Interested", "Quotation", "Won", "Lost"];
+const jobStages = ["New", "Design approval", "Material ready", "Carpentry", "Upholstery", "Polish", "Quality check", "Ready", "Delivered"];
 
 function money(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -357,6 +396,10 @@ export default function Home() {
     interactions: [],
     supplierAssignments: [],
     auditLogs: [],
+    leads: [],
+    jobCards: [],
+    heldOrders: [],
+    stockVerifications: [],
     syncedAt: "",
   });
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -416,14 +459,30 @@ export default function Home() {
     "Point the camera at the product QR code.",
   );
   const [manualScanCode, setManualScanCode] = useState("");
-  const [operationsTab, setOperationsTab] = useState<"tasks" | "customers">("tasks");
+  const [operationsTab, setOperationsTab] = useState<"tasks" | "customers" | "leads" | "jobs">("tasks");
   const [taskFilter, setTaskFilter] = useState<"active" | "completed" | "all">("active");
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeName>("forest");
   const [billingStep, setBillingStep] = useState<1 | 2 | 3>(1);
   const [density, setDensity] = useState<DensityName>("comfortable");
+  const [fontName, setFontName] = useState<FontName>("system");
+  const [textScale, setTextScale] = useState<TextScaleName>("normal");
   const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [leadForm, setLeadForm] = useState<Partial<Lead>>({ source: "Walk-in", status: "New", followUpDate: isoDate() });
+  const [jobCardForm, setJobCardForm] = useState<Partial<JobCard>>({ stage: "New", referenceImages: [] });
+  const [jobReferenceFiles, setJobReferenceFiles] = useState<File[]>([]);
+  const [showLeadForm, setShowLeadForm] = useState(false);
+  const [showJobCardForm, setShowJobCardForm] = useState(false);
+  const [showHeldOrders, setShowHeldOrders] = useState(false);
+  const [resumedHoldId, setResumedHoldId] = useState("");
+  const [showStockVerification, setShowStockVerification] = useState(false);
+  const [stockCounts, setStockCounts] = useState<Record<string, number | "">>({});
+  const [stockCheckMeta, setStockCheckMeta] = useState({ checkedBy: "", notes: "" });
+  const [deliveryMonth, setDeliveryMonth] = useState(() => isoDate().slice(0, 7));
   const [restoredOffline, setRestoredOffline] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
@@ -441,6 +500,7 @@ export default function Home() {
   const billRequestIdRef = useRef("");
   const taskSaveLockRef = useRef(false);
   const draftLoadedRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -452,11 +512,19 @@ export default function Home() {
     const next = themes.some((item) => item.id === saved) ? saved! : "teak";
     const savedDensity = window.localStorage.getItem("smaarthome-density") as DensityName | null;
     const nextDensity = savedDensity === "compact" ? "compact" : "comfortable";
+    const savedFont = window.localStorage.getItem("smaarthome-font") as FontName | null;
+    const nextFont: FontName = ["modern", "classic", "friendly"].includes(savedFont || "") ? savedFont! : "system";
+    const savedScale = window.localStorage.getItem("smaarthome-text-scale") as TextScaleName | null;
+    const nextScale: TextScaleName = savedScale === "small" || savedScale === "large" ? savedScale : "normal";
     const frame = window.requestAnimationFrame(() => {
       setTheme(next);
       setDensity(nextDensity);
+      setFontName(nextFont);
+      setTextScale(nextScale);
       document.documentElement.dataset.theme = next;
       document.documentElement.dataset.density = nextDensity;
+      document.documentElement.dataset.font = nextFont;
+      document.documentElement.dataset.textScale = nextScale;
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -471,6 +539,18 @@ export default function Home() {
     setDensity(next);
     document.documentElement.dataset.density = next;
     window.localStorage.setItem("smaarthome-density", next);
+  }
+
+  function changeFont(next: FontName) {
+    setFontName(next);
+    document.documentElement.dataset.font = next;
+    window.localStorage.setItem("smaarthome-font", next);
+  }
+
+  function changeTextScale(next: TextScaleName) {
+    setTextScale(next);
+    document.documentElement.dataset.textScale = next;
+    window.localStorage.setItem("smaarthome-text-scale", next);
   }
 
   useEffect(() => {
@@ -509,7 +589,7 @@ export default function Home() {
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, suppliers: [], tasks: [], interactions: [], supplierAssignments: [], auditLogs: [], syncedAt: "" });
+    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, suppliers: [], tasks: [], interactions: [], supplierAssignments: [], auditLogs: [], leads: [], jobCards: [], heldOrders: [], stockVerifications: [], syncedAt: "" });
     setCart([]);
     window.localStorage.removeItem("smaarthome-offline-session");
     setAuthStatus("logged_out");
@@ -549,7 +629,7 @@ export default function Home() {
         if (cached) {
           try {
             const restored = JSON.parse(cached) as ExpoState;
-            setState({ ...restored, auditLogs: restored.auditLogs || [] });
+            setState({ ...restored, auditLogs: restored.auditLogs || [], leads: restored.leads || [], jobCards: restored.jobCards || [], heldOrders: restored.heldOrders || [], stockVerifications: restored.stockVerifications || [] });
             setRestoredOffline(true);
           } catch {
             window.localStorage.removeItem("smaarthome-offline-state");
@@ -600,6 +680,7 @@ export default function Home() {
           setCardCharge(draft.cardCharge || 0);
           setTransportCharge(draft.transportCharge || 0);
           setOtherCharge(draft.otherCharge || 0);
+          setDraftRestored(true);
           notify("Your unfinished order draft was restored.");
         }, 0);
       }
@@ -621,7 +702,7 @@ export default function Home() {
     }));
   }, [authStatus, cart, customer, billingStep, discountType, discountValue, paidAmount, paymentMode, cardCharge, transportCharge, otherCharge]);
 
-  async function mutate(payload: Record<string, unknown>, success: string) {
+  async function mutate(payload: Record<string, unknown>, success: string, persistError = false) {
     setBusy(true);
     try {
       const response = await fetch("/api/expo", {
@@ -629,7 +710,13 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = (await response.json()) as ExpoState & { error?: string };
+      const responseText = await response.text();
+      let data: ExpoState & { error?: string };
+      try {
+        data = JSON.parse(responseText) as ExpoState & { error?: string };
+      } catch {
+        throw new Error(response.ok ? "Server returned an incomplete response. Please retry." : `Server error ${response.status}. Please retry.`);
+      }
       if (response.status === 401) setAuthStatus("logged_out");
       if (!response.ok) throw new Error(data.error || "Unable to save");
       setState(data);
@@ -637,11 +724,14 @@ export default function Home() {
       setRestoredOffline(false);
       setSettingsForm(data.settings || DEFAULT_SETTINGS);
       setOnline(true);
+      if (persistError) setSaveError("");
       notify(success);
       return data;
     } catch (error) {
       setOnline(false);
-      notify(error instanceof Error ? error.message : "Unable to save");
+      const message = error instanceof Error ? error.message : "Unable to save";
+      if (persistError) setSaveError(message);
+      notify(message);
       return null;
     } finally {
       setBusy(false);
@@ -894,14 +984,18 @@ export default function Home() {
     if (!cart.length) return notify("Add at least one product.");
     if (!customer.name.trim() || !customer.phone.trim())
       return notify("Customer name and phone number are required.");
-    if (!online)
+    if (!online) {
+      setSaveError("Internet connection is required. Your draft is safe—reconnect and press Retry save.");
       return notify("Internet is required to save an order safely.");
+    }
+    setSaveError("");
     if (!billRequestIdRef.current) billRequestIdRef.current = crypto.randomUUID();
+    const requestId = billRequestIdRef.current;
     const data = await mutate(
       {
         action: "createBill",
         bill: {
-          clientRequestId: billRequestIdRef.current,
+          clientRequestId: requestId,
           customerName: customer.name,
           customerPhone: customer.phone,
           customerAddress: customer.address,
@@ -934,10 +1028,15 @@ export default function Home() {
         },
       },
       "Order booked, follow-ups created and stock synced.",
+      true,
     );
     if (data) {
+      const created = data.bills.find((bill) => bill.clientRequestId === requestId) || data.bills[0];
+      if (!created) {
+        setSaveError("Order response could not be verified. Your draft is still safe; press Retry save.");
+        return;
+      }
       billRequestIdRef.current = "";
-      const created = data.bills[0];
       setCart([]);
       setCustomer({
         name: "",
@@ -958,6 +1057,8 @@ export default function Home() {
       setTransportCharge(0);
       setOtherCharge(0);
       setBillingStep(1);
+      setDraftRestored(false);
+      setSaveError("");
       window.localStorage.removeItem("smaarthome-order-draft");
       setActive("bills");
       setSelectedBill(created || null);
@@ -979,6 +1080,10 @@ export default function Home() {
           notes: item.customizeDetails || "",
         })));
       }
+      if (resumedHoldId) {
+        await mutate({ action: "deleteHeldOrder", id: resumedHoldId }, "Saved order removed from Held bills.");
+        setResumedHoldId("");
+      }
     }
   }
 
@@ -994,6 +1099,143 @@ export default function Home() {
     setMobileSummaryOpen(false);
     setBillingStep(3);
   }
+
+  function currentBillingDraft(): BillingDraft {
+    return {
+      cart, customer, billingStep, discountType, discountValue, paidAmount,
+      paymentMode, cardCharge, transportCharge, otherCharge,
+    };
+  }
+
+  function clearBillingDraft() {
+    setCart([]);
+    setCustomer({
+      name: "", phone: "", address: "", staffName: "",
+      counterName: state.settings.defaultCounter || "Counter 1", deliveryDate: "",
+      accountantName: "", managerName: "", orderNotes: "",
+    });
+    setDiscountType("amount");
+    setDiscountValue(0);
+    setPaidAmount(0);
+    setPaymentMode("CASH");
+    setCardCharge(0);
+    setTransportCharge(0);
+    setOtherCharge(0);
+    setBillingStep(1);
+    setSaveError("");
+    setDraftRestored(false);
+    setResumedHoldId("");
+    billRequestIdRef.current = "";
+    window.localStorage.removeItem("smaarthome-order-draft");
+  }
+
+  async function holdCurrentBill() {
+    if (!cart.length && !customer.name.trim() && !customer.phone.trim()) return notify("Start a bill before holding it.");
+    const name = `${customer.name.trim() || "Walk-in customer"} · ${cart.reduce((sum, item) => sum + item.qty, 0)} items`;
+    const data = await mutate({
+      action: "saveHeldOrder",
+      heldOrder: { id: resumedHoldId, name, payload: currentBillingDraft() },
+    }, "Bill held safely. Continue it from Held bills.");
+    if (data) {
+      clearBillingDraft();
+      setShowHeldOrders(true);
+    }
+  }
+
+  function resumeHeldOrder(held: HeldOrder) {
+    const draft = held.payload;
+    setCart(draft.cart || []);
+    setCustomer((current) => ({ ...current, ...(draft.customer || {}) }));
+    setBillingStep(draft.billingStep || 1);
+    setDiscountType(draft.discountType || "amount");
+    setDiscountValue(draft.discountValue || 0);
+    setPaidAmount(draft.paidAmount || 0);
+    setPaymentMode(draft.paymentMode || "CASH");
+    setCardCharge(draft.cardCharge || 0);
+    setTransportCharge(draft.transportCharge || 0);
+    setOtherCharge(draft.otherCharge || 0);
+    setResumedHoldId(held.id);
+    setShowHeldOrders(false);
+    setDraftRestored(true);
+    setActive("billing");
+    notify(`${held.name} restored. Continue billing from where you stopped.`);
+  }
+
+  async function saveLead(event: FormEvent) {
+    event.preventDefault();
+    const data = await mutate({ action: "saveLead", lead: leadForm }, leadForm.id ? "Lead updated." : "Lead added to follow-up pipeline.");
+    if (data) {
+      setLeadForm({ source: "Walk-in", status: "New", followUpDate: isoDate() });
+      setShowLeadForm(false);
+    }
+  }
+
+  async function saveJobCard(event: FormEvent) {
+    event.preventDefault();
+    try {
+      const uploadedImages = [...(jobCardForm.referenceImages || [])];
+      for (const file of jobReferenceFiles.slice(0, 6)) {
+        const uploaded = await uploadImage(file);
+        uploadedImages.push(uploaded.url);
+      }
+      const next = { ...jobCardForm, referenceImages: uploadedImages };
+      const data = await mutate({ action: "saveJobCard", jobCard: next }, jobCardForm.id ? "Job card updated." : "Custom furniture job card created.");
+      if (data) {
+        setJobCardForm({ stage: "New", referenceImages: [] });
+        setJobReferenceFiles([]);
+        setShowJobCardForm(false);
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Reference image upload failed.");
+    }
+  }
+
+  function startStockVerification() {
+    setStockCounts({});
+    setStockCheckMeta({ checkedBy: "", notes: "" });
+    setShowStockVerification(true);
+  }
+
+  async function saveStockVerification(event: FormEvent) {
+    event.preventDefault();
+    const lines = state.products.filter((product) => stockCounts[product.id] !== "" && stockCounts[product.id] !== undefined)
+      .map((product) => ({ productId: product.id, code: product.code, name: product.name, systemQty: product.stockQty, countedQty: Number(stockCounts[product.id]) }));
+    if (!lines.length) return notify("Enter the physical count for at least one product.");
+    const data = await mutate({ action: "saveStockVerification", lines, ...stockCheckMeta }, "Physical stock verified and differences updated.");
+    if (data) setShowStockVerification(false);
+  }
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = Boolean(target?.closest("input,textarea,select,[contenteditable='true']"));
+      if (event.key === "Escape") {
+        setMobileSummaryOpen(false); setMobileMoreOpen(false); setShowShortcuts(false);
+        return;
+      }
+      if (event.key === "F2") {
+        event.preventDefault();
+        setActive("billing"); setBillingStep(2);
+        window.setTimeout(() => searchInputRef.current?.focus(), 80);
+        return;
+      }
+      if (typing && !(event.ctrlKey || event.metaKey)) return;
+      if (event.altKey && ["1", "2", "3", "4", "5"].includes(event.key)) {
+        event.preventDefault();
+        setActive((["dashboard", "billing", "products", "bills", "deliveries"] as Page[])[Number(event.key) - 1]);
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "h") {
+        event.preventDefault();
+        if (active === "billing") void holdCurrentBill();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && active === "billing" && billingStep === 3) {
+        event.preventDefault();
+        void confirmBill();
+      } else if (!typing && event.key === "?") {
+        event.preventDefault(); setShowShortcuts(true);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  });
 
   function downloadBackup() {
     const backup = {
@@ -1330,8 +1572,10 @@ export default function Home() {
       <script>window.onload=()=>window.print()</script></body></html>`);
     popup.document.close();
   }
-  function shareWhatsApp(bill: Bill) {
-    const text = `${state.settings.businessName}\nOrder: ${bill.billNo}\nCustomer: ${bill.customerName}\nTotal: ${money(bill.grandTotal)}\nAdvance: ${money(bill.paidAmount)}\nBalance: ${money(bill.balanceAmount)}\nExpected delivery: ${bill.deliveryDate || "Not set"}\nStatus: ${bill.deliveryStatus}\nThank you!`;
+  function shareWhatsApp(bill: Bill, kind: "invoice" | "delivery" = "invoice") {
+    const text = kind === "delivery"
+      ? `Hello ${bill.customerName},\n\nYour ${state.settings.businessName} order ${bill.billNo} is currently: ${bill.deliveryStatus}.\nExpected delivery: ${bill.deliveryDate || "To be confirmed"}.\nBalance: ${money(bill.balanceAmount)}.\n\nPlease contact us if the delivery date needs to be updated.`
+      : `${state.settings.businessName}\nOrder: ${bill.billNo}\nCustomer: ${bill.customerName}\nProducts: ${bill.items.map((item) => `${item.name} (${item.qty})`).join(", ")}\nTotal: ${money(bill.grandTotal)}\nAdvance: ${money(bill.paidAmount)}\nBalance: ${money(bill.balanceAmount)}\nExpected delivery: ${bill.deliveryDate || "Not set"}\nStatus: ${bill.deliveryStatus}\nThank you!`;
     const phone = bill.customerPhone.replace(/\D/g, "");
     window.open(
       `https://wa.me/${phone.startsWith("91") ? phone : `91${phone}`}?text=${encodeURIComponent(text)}`,
@@ -1419,6 +1663,18 @@ export default function Home() {
         ),
     [activeBills, deliveryFilter],
   );
+  const deliveryCalendarDays = useMemo(() => {
+    const [year, month] = deliveryMonth.split("-").map(Number);
+    const firstDay = new Date(year, month - 1, 1).getDay();
+    const dayCount = new Date(year, month, 0).getDate();
+    return [
+      ...Array.from({ length: firstDay }, () => null),
+      ...Array.from({ length: dayCount }, (_, index) => {
+        const date = `${deliveryMonth}-${String(index + 1).padStart(2, "0")}`;
+        return { date, day: index + 1, bills: activeBills.filter((bill) => bill.deliveryDate === date) };
+      }),
+    ];
+  }, [deliveryMonth, activeBills]);
   const inRange = useCallback(
     (bill: Bill, delivery = false) => {
       const key = delivery ? bill.deliveryDate : bill.createdAt.slice(0, 10);
@@ -1702,7 +1958,7 @@ export default function Home() {
             icon="⇢"
             label="Deliveries"
           />
-          <Nav active={active === "operations"} onClick={() => setActive("operations")} icon="✓" label="Tasks & CRM" />
+          <Nav active={active === "operations"} onClick={() => setActive("operations")} icon="✓" label="CRM, Leads & Jobs" />
           <Nav active={active === "suppliers"} onClick={() => setActive("suppliers")} icon="◇" label="Suppliers" />
           <Nav
             active={active === "reports"}
@@ -1719,6 +1975,7 @@ export default function Home() {
         </nav>
         <label className="sidebar-theme">Theme<select value={theme} onChange={(event) => changeTheme(event.target.value as ThemeName)}>{themes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         <label className="sidebar-theme sidebar-density">Display<select value={density} onChange={(event) => changeDensity(event.target.value as DensityName)}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+        <button className="sidebar-help" onClick={() => setShowShortcuts(true)}>⌨ Keyboard shortcuts</button>
         <div className={`sync-card ${online ? "online" : "offline"}`}>
           <span className="sync-dot" />
           <div>
@@ -1780,7 +2037,7 @@ export default function Home() {
             <div className="mobile-more-head"><div><span className="eyebrow">More tools</span><h2>Manage showroom</h2></div><button onClick={() => setMobileMoreOpen(false)}>×</button></div>
             {([
               ["deliveries", "⇢", "Deliveries", "Expected dates and order status"],
-              ["operations", "✓", "Tasks & customers", "Schedules, follow-ups and completed history"],
+              ["operations", "✓", "CRM, Leads & Jobs", "Tasks, walk-ins, follow-ups and custom job cards"],
               ["suppliers", "◇", "Suppliers", "Purchases and supplier assignments"],
               ["reports", "▤", "Reports", "Sales, staff work and downloadable reports"],
               ["settings", "⚙", "Settings", "Business, GST and staff setup"],
@@ -1963,7 +2220,10 @@ export default function Home() {
               {([1, 2, 3] as const).map((step) => <button key={step} className={billingStep === step ? "active" : billingStep > step ? "done" : ""} onClick={() => { if (step < billingStep) { setMobileSummaryOpen(false); setBillingStep(step); } }} disabled={step > billingStep}>
                 <span>{billingStep > step ? "✓" : step}</span><div><strong>{step === 1 ? "Customer" : step === 2 ? "Products" : "Payment"}</strong><small>{step === 1 ? "Name & delivery" : step === 2 ? "Choose items" : "Review & save"}</small></div>
               </button>)}
-              <p>{cart.reduce((sum, item) => sum + item.qty, 0)} items · {money(grandTotal)} <em>{online ? "Draft auto-saved" : "Offline draft safe"}</em></p>
+              <div className="billing-progress-summary">
+                <p>{cart.reduce((sum, item) => sum + item.qty, 0)} items · {money(grandTotal)} <em>{online ? "Draft auto-saved" : "Offline draft safe"}</em></p>
+                <div><button onClick={() => setShowHeldOrders(true)}>Held bills <b>{state.heldOrders.length}</b></button><button onClick={holdCurrentBill}>Hold bill</button><button onClick={() => setShowShortcuts(true)} aria-label="Keyboard shortcuts">⌨</button></div>
+              </div>
             </div>
             <div className={`catalog-panel ${billingStep !== 2 ? "wizard-hidden" : ""}`}>
               <div className="section-heading">
@@ -1985,6 +2245,7 @@ export default function Home() {
                 <label className="search-box">
                   <span>⌕</span>
                   <input
+                    ref={searchInputRef}
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Search product or code…"
@@ -2166,6 +2427,7 @@ export default function Home() {
               {billingStep === 2 && <div className="wizard-actions single"><button className="primary-action" disabled={!cart.length} onClick={continueBilling}>Continue to payment <span>→</span></button></div>}
               <div className="cart-scroll-area">
               <div className={`customer-fields ${billingStep !== 1 ? "wizard-hidden" : ""}`}>
+                {draftRestored && <div className="restore-notice"><span>↺</span><div><strong>Unfinished bill restored</strong><small>Your products and customer details were recovered safely.</small></div><button onClick={() => setDraftRestored(false)}>Got it</button></div>}
                 <div className="field-pair">
                   <label>
                     Customer name
@@ -2322,12 +2584,13 @@ export default function Home() {
                   <strong>{money(balance)}</strong>
                 </div>
               </div>
+              {saveError && <div className="save-error" role="alert"><span>!</span><div><strong>Order not confirmed yet</strong><small>{saveError}</small></div><button onClick={confirmBill} disabled={busy}>Retry save</button></div>}
               <div className="wizard-actions"><button className="secondary-action" onClick={() => setBillingStep(2)}>← Back</button><button
                   className="primary-action"
                   disabled={!cart.length || busy || !online}
                   onClick={confirmBill}
                 >
-                  {busy ? "Syncing…" : online ? "Save order slip" : "Connect to save"}
+                  {busy ? "Saving securely…" : saveError ? "Retry save" : online ? "Save order slip" : "Connect to save"}
                   <span>→</span>
                 </button></div>
               <p className="order-number-note">Order number is automatic, unique and continues from the last saved order.</p>
@@ -2383,6 +2646,7 @@ export default function Home() {
                 >
                   ▧ Bulk images
                 </button>
+                <button className="secondary-action" onClick={startStockVerification}>✓ Verify physical stock</button>
                 <button
                   className="primary-small"
                   onClick={() => {
@@ -2644,6 +2908,11 @@ export default function Home() {
                 note="Completed"
               />
             </div>
+            <section className="delivery-calendar">
+              <div className="card-heading"><div><span className="eyebrow">Calendar planner</span><h2>Delivery month at a glance</h2><p>Click any scheduled customer to open the order.</p></div><label>Month<input type="month" value={deliveryMonth} onChange={(event) => setDeliveryMonth(event.target.value || isoDate().slice(0, 7))} /></label></div>
+              <div className="calendar-weekdays">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div>
+              <div className="calendar-grid">{deliveryCalendarDays.map((entry, index) => entry ? <div className={`calendar-day ${entry.date === isoDate() ? "today" : ""}`} key={entry.date}><b>{entry.day}</b><div>{entry.bills.slice(0, 3).map((bill) => <button key={bill.id} onClick={() => setSelectedBill(bill)}><span>{bill.customerName}</span><small>{bill.billNo}</small></button>)}{entry.bills.length > 3 && <small>+{entry.bills.length - 3} more</small>}</div></div> : <div className="calendar-day empty" key={`empty-${index}`} />)}</div>
+            </section>
             <section className="delivery-timeline-board">
               <div className="card-heading"><div><span className="eyebrow">Customer & delivery timeline</span><h2>Every promise, stage by stage</h2><p>Open an order to see products, payments and customer details.</p></div></div>
               <div className="timeline-orders">
@@ -2747,6 +3016,8 @@ export default function Home() {
               <div className="heading-actions">
                 <button className="secondary-action" onClick={() => { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
                 <button className="primary-small" onClick={() => { setInteractionForm({ type: "Follow-up", status: "Open", nextFollowUp: isoDate() }); setShowInteractionForm(true); }}>＋ Customer activity</button>
+                <button className="secondary-action" onClick={() => { setLeadForm({ source: "Walk-in", status: "New", followUpDate: isoDate() }); setShowLeadForm(true); }}>＋ Walk-in lead</button>
+                <button className="secondary-action" onClick={() => { setJobCardForm({ stage: "New", referenceImages: [] }); setJobReferenceFiles([]); setShowJobCardForm(true); }}>＋ Job card</button>
               </div>
             </div>
             <div className="metric-grid">
@@ -2754,10 +3025,14 @@ export default function Home() {
               <Metric label="Follow-ups due" value={String(followUpsDue.length)} note="Today / overdue" alert={followUpsDue.length > 0} />
               <Metric label="Open complaints" value={String(openComplaints.length)} note="Needs closure" alert={openComplaints.length > 0} />
               <Metric label="Customer records" value={String(new Set(activeBills.map((bill) => normalizePhone(bill.customerPhone)).filter(Boolean)).size)} note="From billing history" />
+              <Metric label="Active leads" value={String(state.leads.filter((lead) => !["Won", "Lost"].includes(lead.status)).length)} note={`${state.leads.filter((lead) => lead.followUpDate && lead.followUpDate <= isoDate() && !["Won", "Lost"].includes(lead.status)).length} follow-ups due`} />
+              <Metric label="Custom jobs" value={String(state.jobCards.filter((job) => job.stage !== "Delivered").length)} note={`${state.jobCards.filter((job) => job.expectedDate && job.expectedDate < isoDate() && job.stage !== "Delivered").length} delayed`} />
             </div>
             <div className="filter-row operation-tabs">
               <button className={operationsTab === "tasks" ? "active" : ""} onClick={() => setOperationsTab("tasks")}>Tasks & schedules</button>
               <button className={operationsTab === "customers" ? "active" : ""} onClick={() => setOperationsTab("customers")}>Customer follow-up & service</button>
+              <button className={operationsTab === "leads" ? "active" : ""} onClick={() => setOperationsTab("leads")}>Marketing & leads</button>
+              <button className={operationsTab === "jobs" ? "active" : ""} onClick={() => setOperationsTab("jobs")}>Custom job cards</button>
             </div>
             {operationsTab === "tasks" ? (
               <><div className="task-filter" role="group" aria-label="Task history filter">
@@ -2771,7 +3046,7 @@ export default function Home() {
                 </tr>)}
                 {!visibleTasks.length && <tr><td colSpan={7} className="empty-table">{taskFilter === "completed" ? "No completed tasks yet. Finished work will remain here." : taskFilter === "active" ? "No active tasks. Add a showroom activity or reopen one from Completed." : "No tasks yet. Add your first showroom activity."}</td></tr>}
               </tbody></table></div></>
-            ) : (
+            ) : operationsTab === "customers" ? (
               <div className="table-wrap"><table><thead><tr><th>Customer</th><th>Type</th><th>Details</th><th>Assigned</th><th>Next follow-up</th><th>Status</th><th /></tr></thead><tbody>
                 {state.interactions.map((item) => { const priorBills = activeBills.filter((bill) => normalizePhone(bill.customerPhone) === normalizePhone(item.customerPhone)); return <tr key={item.id} className={item.status !== "Closed" && item.nextFollowUp && item.nextFollowUp < isoDate() ? "overdue-row" : ""}>
                   <td><strong>{item.customerName}</strong><small className="block-muted">{item.customerPhone} · {priorBills.length ? `Existing · ${priorBills.length} bill${priorBills.length > 1 ? "s" : ""}` : "New customer"}</small></td><td><span className={`interaction-type ${item.type.toLowerCase().replace(/\s+/g, "-")}`}>{item.type}</span></td><td>{item.details || "—"}</td><td>{item.assignedTo || "—"}</td><td>{item.nextFollowUp || "Not set"}</td><td>{item.status}</td>
@@ -2779,6 +3054,25 @@ export default function Home() {
                 </tr>})}
                 {!state.interactions.length && <tr><td colSpan={7} className="empty-table">No customer follow-ups, enquiries or complaints yet.</td></tr>}
               </tbody></table></div>
+            ) : operationsTab === "leads" ? (
+              <div className="table-wrap"><table><thead><tr><th>Lead</th><th>Source</th><th>Interested in</th><th>Assigned</th><th>Follow-up</th><th>Status</th><th /></tr></thead><tbody>
+                {state.leads.map((lead) => <tr key={lead.id} className={lead.followUpDate && lead.followUpDate < isoDate() && !["Won", "Lost"].includes(lead.status) ? "overdue-row" : ""}>
+                  <td><strong>{lead.customerName}</strong><small className="block-muted">{lead.phone}</small></td><td>{lead.source}</td><td>{lead.interest || "—"}</td><td>{lead.assignedTo || "—"}</td><td>{lead.followUpDate || "Not set"}</td><td><span className={`lead-status ${lead.status.toLowerCase()}`}>{lead.status}</span></td>
+                  <td><div className="row-actions"><button onClick={() => { setLeadForm(lead); setShowLeadForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteLead", id: lead.id }, "Lead deleted.")}>Delete</button></div></td>
+                </tr>)}
+                {!state.leads.length && <tr><td colSpan={7} className="empty-table">No leads yet. Add a walk-in, Instagram, Google or referral enquiry.</td></tr>}
+              </tbody></table></div>
+            ) : (
+              <div className="job-card-grid">
+                {state.jobCards.map((job) => <article className="job-card" key={job.id}>
+                  <header><div><span>{job.jobNo}</span><h3>{job.customerName}</h3><small>{job.phone || "No phone"}</small></div><em>{job.stage}</em></header>
+                  <div className="job-specs"><span><small>Measurements</small><b>{job.measurements || "Not added"}</b></span><span><small>Material</small><b>{[job.woodMaterial, job.fabric].filter(Boolean).join(" · ") || "Not added"}</b></span><span><small>Expected</small><b>{job.expectedDate || "Not set"}</b></span><span><small>Estimated cost</small><b>{money(job.estimatedCost)}</b></span></div>
+                  {job.referenceImages.length > 0 && <div className="job-images">{job.referenceImages.slice(0, 4).map((image, index) => <img src={image} alt={`${job.jobNo} reference ${index + 1}`} key={image} />)}</div>}
+                  <p>{job.notes || "No additional production notes."}</p>
+                  <footer><small>Assigned: {job.assignedTo || "Not assigned"}</small><div className="row-actions"><button onClick={() => { setJobCardForm(job); setJobReferenceFiles([]); setShowJobCardForm(true); }}>Update</button><button className="danger-link" onClick={() => mutate({ action: "deleteJobCard", id: job.id }, "Job card deleted.")}>Delete</button></div></footer>
+                </article>)}
+                {!state.jobCards.length && <div className="today-empty">No custom furniture job cards yet. Add measurements, materials, reference photos and production stages here.</div>}
+              </div>
             )}
           </section>
         )}
@@ -2959,13 +3253,17 @@ export default function Home() {
                 <div><strong>Display spacing</strong><p>Comfortable gives maximum breathing room. Compact shows more rows when needed.</p></div>
                 <div className="density-picker"><button type="button" className={density === "comfortable" ? "active" : ""} onClick={() => changeDensity("comfortable")}><span>Comfortable</span><small>Large gaps · 48px controls · easiest to read</small></button><button type="button" className={density === "compact" ? "active" : ""} onClick={() => changeDensity("compact")}><span>Compact</span><small>More information · still touch friendly</small></button></div>
               </div>
+              <div className="form-section readability-section">
+                <div><strong>Font & text size</strong><p>Choose the font style and readable text size that suits each billing counter.</p></div>
+                <div className="readability-controls"><label>App font<select value={fontName} onChange={(event) => changeFont(event.target.value as FontName)}><option value="system">System / Segoe</option><option value="modern">Modern / Geist</option><option value="classic">Classic / Georgia</option><option value="friendly">Friendly / Trebuchet</option></select></label><label>Text size<select value={textScale} onChange={(event) => changeTextScale(event.target.value as TextScaleName)}><option value="small">Small</option><option value="normal">Normal</option><option value="large">Large</option></select></label><button type="button" className="secondary-action" onClick={() => setShowShortcuts(true)}>⌨ Keyboard shortcuts</button></div>
+              </div>
               <div className="form-section safety-section">
                 <div><strong>Backup & offline safety</strong><p>Download a complete JSON copy. The latest synced data and unfinished order draft also stay available on this device.</p></div>
                 <div className="safety-actions"><button type="button" className="primary-small" onClick={downloadBackup}>↓ Download data backup</button><div className={`safety-status ${online ? "online" : "offline"}`}><span>●</span><strong>{online ? "Cloud sync active" : "Offline cache active"}</strong><small>{online ? "Supabase is connected" : "Reconnect before saving final bills"}</small></div></div>
               </div>
               <div className="form-section audit-section">
-                <div><strong>Audit history</strong><p>Recent billing, stock, delivery, customer and settings changes are recorded across devices.</p></div>
-                <div className="audit-list">{state.auditLogs.slice(0, 12).map((log) => <div key={log.id}><span>{log.entityType.slice(0, 1).toUpperCase()}</span><p><strong>{log.summary}</strong><small>{shortDate(log.createdAt)} · {log.action}</small></p></div>)}{!state.auditLogs.length && <div className="today-empty">New updates will appear here automatically.</div>}</div>
+                <div><strong>Complete audit history</strong><p>Every save, edit, delete, stock verification, delivery and customer change is recorded across devices.</p></div>
+                <div className="audit-list">{state.auditLogs.slice(0, 100).map((log) => <div key={log.id}><span>{log.entityType.slice(0, 1).toUpperCase()}</span><p><strong>{log.summary}</strong><small>{shortDate(log.createdAt)} · {log.action}</small></p></div>)}{!state.auditLogs.length && <div className="today-empty">New updates will appear here automatically.</div>}</div>
               </div>
               <div className="form-section">
                 <div>
@@ -3563,8 +3861,9 @@ export default function Home() {
                 className="secondary-action"
                 onClick={() => shareWhatsApp(selectedBill)}
               >
-                WhatsApp
+                WhatsApp invoice
               </button>
+              <button className="secondary-action" onClick={() => shareWhatsApp(selectedBill, "delivery")}>WhatsApp delivery</button>
               {selectedBill.status !== "cancelled" && (
                 <button className="secondary-action" onClick={() => openAssignmentForBill(selectedBill)}>
                   Assign supplier
@@ -3810,6 +4109,69 @@ export default function Home() {
           </div></fieldset>)}</div>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => { setAssignmentBill(null); setAssignmentDrafts([]); }}>Save later</button><button className="primary-small" disabled={!state.suppliers.some((supplier) => supplier.status === "Active")}>Save assignments</button></div>
         </form></div>
+      )}
+
+      {showLeadForm && (
+        <div className="modal-backdrop"><form className="modal-card" onSubmit={saveLead}>
+          <div className="modal-head"><div><span className="eyebrow">Marketing & leads</span><h2>{leadForm.id ? "Edit lead" : "Add walk-in / enquiry"}</h2></div><button type="button" onClick={() => setShowLeadForm(false)}>×</button></div>
+          <div className="form-grid">
+            <label>Customer name<input value={leadForm.customerName || ""} onChange={(event) => setLeadForm({ ...leadForm, customerName: event.target.value })} required /></label>
+            <label>Phone<input value={leadForm.phone || ""} onChange={(event) => setLeadForm({ ...leadForm, phone: event.target.value })} required /></label>
+            <label>Lead source<select value={leadForm.source || "Walk-in"} onChange={(event) => setLeadForm({ ...leadForm, source: event.target.value })}>{leadSources.map((source) => <option key={source}>{source}</option>)}</select></label>
+            <label>Status<select value={leadForm.status || "New"} onChange={(event) => setLeadForm({ ...leadForm, status: event.target.value })}>{leadStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+            <label className="wide">Interested products / requirement<input value={leadForm.interest || ""} onChange={(event) => setLeadForm({ ...leadForm, interest: event.target.value })} placeholder="Sofa, cot, custom dining set…" /></label>
+            <label>Assigned staff<input list="lead-staff" value={leadForm.assignedTo || ""} onChange={(event) => setLeadForm({ ...leadForm, assignedTo: event.target.value })} /><datalist id="lead-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label>Next follow-up<input type="date" value={leadForm.followUpDate || ""} onChange={(event) => setLeadForm({ ...leadForm, followUpDate: event.target.value })} /></label>
+            <label className="wide">Notes<textarea rows={3} value={leadForm.notes || ""} onChange={(event) => setLeadForm({ ...leadForm, notes: event.target.value })} /></label>
+          </div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowLeadForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save lead"}</button></div>
+        </form></div>
+      )}
+
+      {showJobCardForm && (
+        <div className="modal-backdrop"><form className="modal-card job-card-modal" onSubmit={saveJobCard}>
+          <div className="modal-head"><div><span className="eyebrow">Custom furniture production</span><h2>{jobCardForm.id ? `Update ${jobCardForm.jobNo}` : "Create job card"}</h2><small>Measurements, materials, reference photos, costing and progress in one record.</small></div><button type="button" onClick={() => setShowJobCardForm(false)}>×</button></div>
+          <div className="form-grid">
+            <label>Customer name<input value={jobCardForm.customerName || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, customerName: event.target.value })} required /></label>
+            <label>Phone<input value={jobCardForm.phone || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, phone: event.target.value })} /></label>
+            <label>Linked bill<select value={jobCardForm.billId || ""} onChange={(event) => { const bill = activeBills.find((row) => row.id === event.target.value); setJobCardForm({ ...jobCardForm, billId: event.target.value, customerName: jobCardForm.customerName || bill?.customerName || "", phone: jobCardForm.phone || bill?.customerPhone || "" }); }}><option value="">No linked bill</option>{activeBills.map((bill) => <option value={bill.id} key={bill.id}>{bill.billNo} · {bill.customerName}</option>)}</select></label>
+            <label>Stage<select value={jobCardForm.stage || "New"} onChange={(event) => setJobCardForm({ ...jobCardForm, stage: event.target.value })}>{jobStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
+            <label className="wide">Measurements<textarea rows={3} value={jobCardForm.measurements || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, measurements: event.target.value })} placeholder="Width, height, depth, room measurements…" /></label>
+            <label>Wood / material<input value={jobCardForm.woodMaterial || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, woodMaterial: event.target.value })} /></label>
+            <label>Fabric / colour<input value={jobCardForm.fabric || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, fabric: event.target.value })} /></label>
+            <label>Foam specification<input value={jobCardForm.foam || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, foam: event.target.value })} /></label>
+            <label>Polish / finish<input value={jobCardForm.polish || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, polish: event.target.value })} /></label>
+            <label>Estimated cost<input type="number" min="0" value={jobCardForm.estimatedCost || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, estimatedCost: Number(event.target.value) })} /></label>
+            <label>Expected completion<input type="date" value={jobCardForm.expectedDate || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, expectedDate: event.target.value })} /></label>
+            <label>Assigned worker<input list="job-staff" value={jobCardForm.assignedTo || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, assignedTo: event.target.value })} /><datalist id="job-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label>Reference photos<input type="file" accept="image/*" multiple onChange={(event) => setJobReferenceFiles(Array.from(event.target.files || []).slice(0, 6))} /><small>{jobReferenceFiles.length ? `${jobReferenceFiles.length} new image(s) selected` : `${jobCardForm.referenceImages?.length || 0} saved image(s)`}</small></label>
+            <label className="wide">Production notes<textarea rows={3} value={jobCardForm.notes || ""} onChange={(event) => setJobCardForm({ ...jobCardForm, notes: event.target.value })} /></label>
+          </div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowJobCardForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save job card"}</button></div>
+        </form></div>
+      )}
+
+      {showHeldOrders && (
+        <div className="modal-backdrop"><div className="modal-card held-orders-modal">
+          <div className="modal-head"><div><span className="eyebrow">Safe bill parking</span><h2>Held bills</h2><small>Continue any customer bill from the same point on any device.</small></div><button onClick={() => setShowHeldOrders(false)}>×</button></div>
+          <div className="held-order-list">{state.heldOrders.map((held) => <article key={held.id}><div><strong>{held.name}</strong><small>{shortDate(held.updatedAt)} · {held.payload.cart?.length || 0} product lines</small></div><span>{money((held.payload.cart || []).reduce((sum, item) => sum + item.price * item.qty, 0))}</span><div className="row-actions"><button onClick={() => resumeHeldOrder(held)}>Continue</button><button className="danger-link" onClick={() => mutate({ action: "deleteHeldOrder", id: held.id }, "Held bill removed.")}>Remove</button></div></article>)}{!state.heldOrders.length && <div className="today-empty">No held bills. Use “Hold bill” while billing to park unfinished work safely.</div>}</div>
+        </div></div>
+      )}
+
+      {showStockVerification && (
+        <div className="modal-backdrop"><form className="modal-card stock-verification-modal" onSubmit={saveStockVerification}>
+          <div className="modal-head"><div><span className="eyebrow">Physical stock verification</span><h2>Count showroom stock</h2><small>Only entered rows will be updated. Differences are saved in audit history.</small></div><button type="button" onClick={() => setShowStockVerification(false)}>×</button></div>
+          <div className="stock-check-meta"><label>Checked by<input value={stockCheckMeta.checkedBy} onChange={(event) => setStockCheckMeta({ ...stockCheckMeta, checkedBy: event.target.value })} /></label><label>Notes<input value={stockCheckMeta.notes} onChange={(event) => setStockCheckMeta({ ...stockCheckMeta, notes: event.target.value })} /></label></div>
+          <div className="stock-count-list"><header><span>Product</span><span>System</span><span>Physical</span><span>Difference</span></header>{state.products.map((product) => { const counted = stockCounts[product.id]; const difference = counted === "" || counted === undefined ? null : Number(counted) - product.stockQty; return <div key={product.id}><span><strong>{product.name}</strong><small>{product.code}</small></span><b>{product.stockQty}</b><input type="number" min="0" value={counted ?? ""} onChange={(event) => setStockCounts({ ...stockCounts, [product.id]: event.target.value === "" ? "" : Math.max(0, Math.floor(Number(event.target.value))) })} placeholder="—" /><em className={difference && difference !== 0 ? "changed" : ""}>{difference === null ? "—" : difference > 0 ? `+${difference}` : difference}</em></div>; })}</div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowStockVerification(false)}>Cancel</button><button className="primary-small" disabled={busy}>{busy ? "Applying…" : "Apply verified counts"}</button></div>
+        </form></div>
+      )}
+
+      {showShortcuts && (
+        <div className="modal-backdrop"><div className="modal-card shortcuts-modal">
+          <div className="modal-head"><div><span className="eyebrow">Universal keyboard shortcuts</span><h2>Work faster</h2></div><button onClick={() => setShowShortcuts(false)}>×</button></div>
+          <div className="shortcut-list"><span><kbd>Alt + 1</kbd><b>Dashboard</b></span><span><kbd>Alt + 2</kbd><b>New order</b></span><span><kbd>Alt + 3</kbd><b>Inventory</b></span><span><kbd>Alt + 4</kbd><b>Orders</b></span><span><kbd>Alt + 5</kbd><b>Deliveries</b></span><span><kbd>F2</kbd><b>Product search</b></span><span><kbd>Ctrl + S</kbd><b>Save bill in payment step</b></span><span><kbd>Ctrl + Shift + H</kbd><b>Hold current bill</b></span><span><kbd>Esc</kbd><b>Close drawer / help</b></span><span><kbd>?</kbd><b>Open this guide</b></span></div>
+        </div></div>
       )}
 
       {qrProduct && (
