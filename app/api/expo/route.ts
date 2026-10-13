@@ -453,7 +453,12 @@ export async function POST(request: Request) {
       const balanceAmount = round2(grandTotal - paidAmount);
       const now = new Date();
       const history: PaymentRecord[] = paidAmount > 0 ? [{ id: uid("pay"), amount: paidAmount, mode: paymentMode, note: "Initial Payment", date: now.toISOString() }] : [];
-      const counter = await env.DB.prepare("UPDATE counters SET value=value+1 WHERE key='bill' RETURNING value").first<{ value: number }>();
+      // `first()` uses the read/query RPC, which wraps SQL in a SELECT. An
+      // UPDATE ... RETURNING statement cannot be used inside that wrapper and
+      // fails in Postgres with `syntax error at or near "SET"`. Keep the
+      // counter write on the exec RPC, then read its value with a real SELECT.
+      await env.DB.prepare("UPDATE counters SET value=value+1 WHERE key='bill'").run();
+      const counter = await env.DB.prepare("SELECT value FROM counters WHERE key='bill'").first<{ value: number }>();
       const billNo = `${clean(setting?.billPrefix, "EXP").toUpperCase()}-${String(counter?.value || Date.now()).padStart(4, "0")}`;
       const billId = uid("bill");
       const columns = `id,bill_no,client_request_id,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,

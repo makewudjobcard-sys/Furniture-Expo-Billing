@@ -56,6 +56,9 @@ test("includes showroom CRM, resilient billing, stock checks and production work
   assert.match(expo, /Order saved but follow-up automation failed/);
   assert.match(expo, /Primary action saved but audit logging failed/);
   assert.match(expo, /type='Happy Call'/);
+  assert.match(expo, /UPDATE counters SET value=value\+1 WHERE key='bill'\"\)\.run\(\)/);
+  assert.match(expo, /SELECT value FROM counters WHERE key='bill'\"\)\.first/);
+  assert.doesNotMatch(expo, /UPDATE counters SET value=value\+1 WHERE key='bill' RETURNING value\"\)\.first/);
   assert.match(schema, /create table if not exists public\.leads/i);
   assert.match(schema, /create table if not exists public\.job_cards/i);
   assert.match(schema, /create table if not exists public\.held_orders/i);
