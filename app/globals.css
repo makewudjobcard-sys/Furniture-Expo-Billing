@@ -171,6 +171,9 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 .row-actions { display: flex; justify-content: flex-end; gap: 9px; }
 .row-actions button { border: 0; background: transparent; color: var(--clay); font-size: 10px; cursor: pointer; }
 .row-actions .danger-link { color: var(--danger); }
+.assigned-chip { display: inline-flex; align-items: center; min-height: 28px; padding: 5px 9px; border-radius: 9px; background: #edf7f0; border: 1px solid #c2dfca; color: var(--success); font-size: 10px; font-weight: 800; white-space: nowrap; }
+.task-row-actions { align-items: center; }
+.task-icon-button { width: 30px; height: 30px; padding: 0 !important; border: 1px solid var(--line) !important; border-radius: 8px; font-size: 16px !important; font-weight: 850; }
 .block-muted { display: block; margin-top: 3px; }
 
 .bill-list { background: var(--surface); border: 1px solid var(--line); border-radius: 15px; overflow: hidden; box-shadow: 0 13px 35px rgba(73,51,36,.05); }
@@ -276,6 +279,12 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 .today-summary span { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--muted); font-size: 9px; }
 .today-summary b { color: var(--ink); font-family: Georgia,serif; font-size: 18px; overflow-wrap: anywhere; }
 .today-planner { overflow: hidden; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); box-shadow: var(--shadow); }
+.dashboard-task-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: #f8fbf8; }
+.dashboard-task-controls > strong { margin-right: auto; color: var(--ink); font-size: 11px; }
+.dashboard-task-controls label { display: grid; grid-template-columns: auto auto; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.dashboard-task-controls select { min-width: 130px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); padding: 6px 8px; font-size: 10px; text-transform: none; letter-spacing: 0; }
+.dashboard-task-controls select[multiple] { min-width: 150px; min-height: 32px; max-height: 68px; padding: 4px; }
+.dashboard-task-controls select[multiple] option { padding: 3px 5px; border-radius: 5px; }
 .today-group { display: grid; grid-template-columns: 150px 1fr; border-bottom: 1px solid var(--line); }
 .today-group > header { display: flex; justify-content: space-between; align-items: start; padding: 16px; background: #f7f3ed; }
 .today-group > header > div { display: flex; align-items: center; gap: 7px; }
@@ -292,6 +301,10 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 .today-copy strong { color: var(--ink); font-family: Georgia,serif; font-size: 12px; }
 .today-copy small { color: var(--muted); font-size: 9px; }
 .today-action { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: white; color: var(--clay); font-size: 8px; font-weight: 800; cursor: pointer; }
+.today-task-actions { display: flex; gap: 6px; }
+.today-task-actions .today-action { width: 34px; height: 34px; padding: 0; font-size: 18px; line-height: 1; }
+.task-done { color: var(--success) !important; border-color: #a9cfb8 !important; background: #eff8f1 !important; }
+.task-unfinished { color: var(--danger) !important; border-color: #e2b7b2 !important; background: #fff2f0 !important; }
 .today-empty { padding: 20px; color: var(--success); font-size: 10px; }
 .today-planner footer { display: flex; justify-content: flex-end; gap: 7px; padding: 10px 13px; background: #f7f3ed; }
 .today-planner footer button { border: 0; background: transparent; color: var(--clay); font-size: 9px; font-weight: 750; cursor: pointer; }
@@ -459,6 +472,7 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
   .today-group > header { padding: 12px 14px; }
   .today-item { grid-template-columns: 32px minmax(0,1fr); }
   .today-action { grid-column: 2; justify-self: start; }
+  .today-task-actions { grid-column: 2; }
 }
 
 @media print {
@@ -1234,6 +1248,9 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 .assigned-task-field input { min-height: 46px; font-size: 13px; font-weight: 650; border-color: #a9cdb8; }
 .field-hint { color: var(--muted); font-size: 9px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .follow-up-notes-field textarea { min-height: 112px; }
+.task-title-field input { min-height: 48px; font-size: 15px; font-weight: 700; }
+.customer-notes-field textarea, .reason-field textarea { min-height: 105px; resize: vertical; }
+.reason-field { display: grid; gap: 7px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
 
 @keyframes dashboard-colour-drift {
   0%, 100% { background-position: 0% 50%; }
@@ -1251,6 +1268,7 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 :root[data-theme="midnight"] .dashboard-page .today-count span,
 :root[data-theme="midnight"] .dashboard-page .today-count small { color: #d9f6e7; }
 :root[data-theme="midnight"] .assigned-task-field { background: #1c332d; border-color: #3f7560; }
+:root[data-theme="midnight"] .assigned-chip { background: #203b35; border-color: #3f7560; color: #d9f6e7; }
 
 @media (max-width: 760px) {
   .task-toolbar { align-items: stretch; }
@@ -1258,4 +1276,8 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
   .task-sort-controls label { flex: 1 1 150px; }
   .task-sort-controls select { width: 100%; }
   .task-sort-controls select[multiple] { min-height: 76px; }
+  .dashboard-task-controls { justify-content: stretch; }
+  .dashboard-task-controls > strong { width: 100%; }
+  .dashboard-task-controls label { flex: 1 1 150px; grid-template-columns: 1fr; }
+  .dashboard-task-controls select { width: 100%; }
 }

@@ -112,7 +112,9 @@ type Supplier = {
 type ExpoTask = {
   id: string; category: string; title: string; details: string; assignedTo: string;
   dueDate: string; priority: string; status: string; linkedBillId: string;
-  linkedCustomerPhone: string; createdAt: string; updatedAt: string;
+  linkedCustomerPhone: string; customerName: string; customerPhone: string; enquiredProducts: string;
+  attendedBy: string; commitmentDate: string; notes: string; completionReason: string;
+  createdAt: string; updatedAt: string;
 };
 type CustomerInteraction = {
   id: string; customerName: string; customerPhone: string; type: string;
@@ -202,6 +204,10 @@ type DashboardAction = {
   action: string;
   open: () => void;
   perform?: () => void | Promise<unknown>;
+  incomplete?: () => void;
+  kind?: "task";
+  assignedTo?: string;
+  updatedAt?: string;
 };
 type ThemeName = "teak" | "forest" | "light" | "midnight" | "ocean" | "rose";
 type DensityName = "comfortable" | "compact";
@@ -489,6 +495,8 @@ export default function Home() {
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
   const [taskCategoryLocked, setTaskCategoryLocked] = useState(false);
+  const [incompleteTask, setIncompleteTask] = useState<ExpoTask | null>(null);
+  const [incompleteReason, setIncompleteReason] = useState("");
   const [interactionForm, setInteractionForm] = useState<Partial<CustomerInteraction>>({ type: "Follow-up", status: "Open" });
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -1520,6 +1528,19 @@ export default function Home() {
       taskSaveLockRef.current = false;
     }
   }
+  function askTaskIncomplete(task: ExpoTask) {
+    setIncompleteTask(task);
+    setIncompleteReason(task.completionReason || "");
+  }
+  async function saveTaskIncomplete(event: FormEvent) {
+    event.preventDefault();
+    if (!incompleteTask || !incompleteReason.trim()) return;
+    const data = await mutate({ action: "saveTask", task: { ...incompleteTask, status: "Incomplete", completionReason: incompleteReason.trim() } }, "Task marked unfinished with a reason.");
+    if (data) {
+      setIncompleteTask(null);
+      setIncompleteReason("");
+    }
+  }
   async function saveInteraction(event: FormEvent) {
     event.preventDefault();
     const data = await mutate({ action: "saveInteraction", interaction: interactionForm }, interactionForm.id ? "Customer activity updated." : "Customer activity added.");
@@ -1865,12 +1886,15 @@ export default function Home() {
       .map((bill) => ({ id: `delivery-${bill.id}`, group: "urgent" as const, icon: "⇢", title: `Delayed delivery · ${bill.customerName}`, detail: `${bill.billNo} · Expected ${bill.deliveryDate}`, action: "View order", open: () => setSelectedBill(bill) })),
     ...openComplaints.map((item) => ({ id: `complaint-${item.id}`, group: "urgent" as const, icon: "!", title: `Complaint · ${item.customerName}`, detail: item.details, action: "Resolve", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...supplierOrdersDelayed.map((item) => ({ id: `supplier-${item.id}`, group: "urgent" as const, icon: "◇", title: `Supplier delay · ${item.productName}`, detail: `${item.billNo} · Expected ${item.expectedDate}`, action: "Update", open: () => setActive("suppliers") })),
-    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: (["High", "Urgent"].includes(task.priority) ? "urgent" : "today") as "urgent" | "today", icon: "✓", title: task.title, detail: `${task.category}${task.assignedTo ? ` · ${task.assignedTo}` : ""}${task.dueDate ? ` · Due ${task.dueDate}` : ""}`, action: "Done", open: () => { setTaskForm(task); setTaskCategoryLocked(false); setShowTaskForm(true); }, perform: () => mutate({ action: "saveTask", task: { ...task, status: "Completed" } }, "Task completed. Open Completed history to view or reopen it.") })),
+    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: (["High", "Urgent"].includes(task.priority) ? "urgent" : "today") as "urgent" | "today", icon: "✓", title: task.title, detail: [task.category, task.assignedTo, task.customerName, task.customerPhone, task.enquiredProducts, task.commitmentDate ? `Commitment ${task.commitmentDate}` : ""].filter(Boolean).join(" · ") || "No task details", action: "Done", kind: "task" as const, assignedTo: task.assignedTo, updatedAt: task.updatedAt, open: () => { setTaskForm(task); setTaskCategoryLocked(false); setShowTaskForm(true); }, perform: () => mutate({ action: "saveTask", task: { ...task, status: "Completed", completionReason: "" } }, "Task completed. Open Completed history to view or reopen it."), incomplete: () => askTaskIncomplete(task) })),
     ...followUpsDue.filter((item) => item.type !== "Complaint").map((item) => ({ id: `follow-${item.id}`, group: "today" as const, icon: "☎", title: `${item.type} · ${item.customerName}`, detail: `${item.customerPhone}${item.details ? ` · ${item.details}` : ""}`, action: "Open", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...activeBills.filter((bill) => bill.deliveryStatus !== "Delivered" && bill.deliveryDate === isoDate()).map((bill) => ({ id: `today-delivery-${bill.id}`, group: "today" as const, icon: "⇢", title: `Delivery today · ${bill.customerName}`, detail: `${bill.billNo} · ${bill.customerPhone}`, action: "View", open: () => setSelectedBill(bill) })),
     ...activeBills.filter((bill) => bill.balanceAmount > 0).map((bill) => ({ id: `balance-${bill.id}`, group: "today" as const, icon: "₹", title: `Collect balance · ${bill.customerName}`, detail: `${bill.billNo} · ${money(bill.balanceAmount)}`, action: "Collect", open: () => setSelectedBill(bill) })),
     ...state.products.filter((product) => product.stockQty <= 2).map((product) => ({ id: `stock-${product.id}`, group: "routine" as const, icon: "▦", title: `Low stock · ${product.name}`, detail: `${product.code} · ${product.stockQty > 0 ? `${product.stockQty} remaining` : "Out of stock"}`, action: "Stock", open: () => { setSearch(product.code); setStockFilter("all"); setActive("products"); } })),
   ];
+  const dashboardActions = todayActionItems
+    .filter((item) => !taskStaffFilter.length || (item.kind === "task" && taskStaffFilter.includes(item.assignedTo || "")))
+    .sort((a, b) => taskSort === "assigned" ? (a.assignedTo || "Unassigned").localeCompare(b.assignedTo || "Unassigned") : taskSort === "due" ? a.detail.localeCompare(b.detail) : (b.updatedAt || "").localeCompare(a.updatedAt || ""));
   const completedToday = state.tasks.filter((task) => task.status === "Completed" && task.updatedAt?.slice(0, 10) === isoDate()).length;
   const completedTasks = state.tasks
     .filter((task) => task.status === "Completed")
@@ -2088,19 +2112,20 @@ export default function Home() {
               </div>
             </section>
             <article className="today-planner">
+              <div className="dashboard-task-controls"><strong>Task view</strong><label>Sort<select value={taskSort} onChange={(event) => setTaskSort(event.target.value as typeof taskSort)}><option value="newest">New to old</option><option value="assigned">Name A–Z</option><option value="due">Due / commitment</option></select></label><label>Staff<select multiple size={Math.min(3, Math.max(2, taskStaffOptions.length))} value={taskStaffFilter} onChange={(event) => setTaskStaffFilter(Array.from(event.target.selectedOptions, (option) => option.value))}>{taskStaffOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>{taskStaffFilter.length > 0 && <button className="text-button" onClick={() => setTaskStaffFilter([])}>All staff</button>}</div>
               {([
                 ["urgent", "Urgent", "No urgent issues. Everything is under control."],
                 ["today", "Today", "No scheduled work for today."],
                 ["routine", "Stock check", "Stock levels look healthy."],
               ] as const).map(([group, label, empty]) => {
-                const rows = todayActionItems.filter((item) => item.group === group);
+                const rows = dashboardActions.filter((item) => item.group === group);
                 return <section className={`today-group ${group}`} key={group}>
                   <header><div><span className="today-dot" /><h2>{label}</h2></div><strong>{rows.length}</strong></header>
                   <div className="today-list">
                     {rows.slice(0, group === "routine" ? 5 : 8).map((item) => <div className="today-item" key={item.id}>
                       <span className="today-icon">{item.icon}</span>
                       <button className="today-copy" onClick={item.open}><strong>{item.title}</strong><small>{item.detail}</small></button>
-                      <button className="today-action" onClick={() => (item.perform || item.open)()}>{item.action} →</button>
+                      {item.kind === "task" ? <div className="today-task-actions"><button className="today-action task-done" aria-label={`Mark ${item.title} complete`} onClick={() => (item.perform || item.open)()}>✓</button><button className="today-action task-unfinished" aria-label={`Mark ${item.title} unfinished`} onClick={() => item.incomplete?.()}>×</button></div> : <button className="today-action" onClick={() => (item.perform || item.open)()}>{item.action} →</button>}
                     </div>)}
                     {!rows.length && <div className="today-empty">✓ {empty}</div>}
                   </div>
@@ -3049,12 +3074,12 @@ export default function Home() {
                 <button className={taskFilter === "active" ? "active" : ""} onClick={() => setTaskFilter("active")}>Active <span>{openTasks.length}</span></button>
                 <button className={taskFilter === "completed" ? "active" : ""} onClick={() => setTaskFilter("completed")}>Completed <span>{completedTasks.length}</span></button>
                 <button className={taskFilter === "all" ? "active" : ""} onClick={() => setTaskFilter("all")}>All <span>{state.tasks.length}</span></button>
-              </div><div className="task-sort-controls"><label>Sort tasks<select value={taskSort} onChange={(event) => setTaskSort(event.target.value as typeof taskSort)}><option value="newest">New to old</option><option value="assigned">Assigned staff A–Z</option><option value="due">Due date</option></select></label><label>Staff filter<select multiple size={Math.min(4, Math.max(2, taskStaffOptions.length))} value={taskStaffFilter} onChange={(event) => setTaskStaffFilter(Array.from(event.target.selectedOptions, (option) => option.value))}>{taskStaffOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>{taskStaffFilter.length > 0 && <button className="text-button" onClick={() => setTaskStaffFilter([])}>Clear staff</button>}</div></div><div className="table-wrap"><table><thead><tr><th>Task</th><th>Category</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
+              </div><div className="task-sort-controls"><label>Sort tasks<select value={taskSort} onChange={(event) => setTaskSort(event.target.value as typeof taskSort)}><option value="newest">New to old</option><option value="assigned">Assigned staff A–Z</option><option value="due">Due date</option></select></label><label>Staff filter<select multiple size={Math.min(4, Math.max(2, taskStaffOptions.length))} value={taskStaffFilter} onChange={(event) => setTaskStaffFilter(Array.from(event.target.selectedOptions, (option) => option.value))}>{taskStaffOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>{taskStaffFilter.length > 0 && <button className="text-button" onClick={() => setTaskStaffFilter([])}>Clear staff</button>}</div></div><div className="table-wrap"><table><thead><tr><th>Task</th><th>Customer / enquiry</th><th>Category</th><th>Assigned</th><th>Commitment</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
                 {visibleTasks.map((task) => <tr key={task.id} className={task.status !== "Completed" && task.dueDate && task.dueDate < isoDate() ? "overdue-row" : ""}>
-                  <td><strong>{task.title}</strong><small className="block-muted">{task.details || "No details"}</small></td><td>{task.category}</td><td>{task.assignedTo || "—"}</td><td>{task.dueDate || "Not set"}</td><td><span className={`priority ${task.priority.toLowerCase()}`}>{task.priority}</span></td><td>{task.status}</td>
-                  <td><div className="row-actions"><button onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "Reopen" : "Done"}</button><button onClick={() => { setTaskCategoryLocked(false); setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></div></td>
+                  <td><strong>{task.title}</strong><small className="block-muted">{task.details || "No details"}{task.notes ? ` · Notes: ${task.notes}` : ""}{task.completionReason ? ` · Reason: ${task.completionReason}` : ""}</small></td><td><strong>{task.customerName || "—"}</strong><small className="block-muted">{[task.customerPhone, task.enquiredProducts, task.attendedBy ? `Attended by ${task.attendedBy}` : ""].filter(Boolean).join(" · ")}</small></td><td>{task.category}</td><td><span className="assigned-chip">{task.assignedTo || "Unassigned"}</span></td><td>{task.commitmentDate || task.dueDate || "Not set"}</td><td><span className={`priority ${task.priority.toLowerCase()}`}>{task.priority}</span></td><td>{task.status}</td>
+                  <td><div className="row-actions task-row-actions"><button className="task-icon-button task-done" aria-label={task.status === "Completed" ? "Reopen task" : "Mark task complete"} onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed", completionReason: task.status === "Completed" ? task.completionReason : "" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "↻" : "✓"}</button>{task.status !== "Completed" && <button className="task-icon-button task-unfinished" aria-label="Mark task unfinished" onClick={() => askTaskIncomplete(task)}>×</button>}<button onClick={() => { setTaskCategoryLocked(false); setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></div></td>
                 </tr>)}
-                {!visibleTasks.length && <tr><td colSpan={7} className="empty-table">{taskFilter === "completed" ? "No completed tasks yet. Finished work will remain here." : taskFilter === "active" ? "No active tasks. Add a showroom activity or reopen one from Completed." : "No tasks yet. Add your first showroom activity."}</td></tr>}
+                {!visibleTasks.length && <tr><td colSpan={8} className="empty-table">{taskFilter === "completed" ? "No completed tasks yet. Finished work will remain here." : taskFilter === "active" ? "No active tasks. Add a showroom activity or reopen one from Completed." : "No tasks yet. Add your first showroom activity."}</td></tr>}
               </tbody></table></div></>
             ) : operationsTab === "customers" ? (
               <div className="table-wrap"><table><thead><tr><th>Customer</th><th>Type</th><th>Details</th><th>Assigned</th><th>Next follow-up</th><th>Status</th><th /></tr></thead><tbody>
@@ -4074,17 +4099,31 @@ export default function Home() {
 
       {showTaskForm && (
         <div className="modal-backdrop"><form className="modal-card" onSubmit={saveTask}>
-          <div className="modal-head"><div><span className="eyebrow">Task & schedule</span><h2>{taskForm.id ? "Edit task" : "Add task"}</h2></div><button type="button" onClick={() => setShowTaskForm(false)}>×</button></div>
+          <div className="modal-head"><div><span className="eyebrow">Task & schedule</span><h2>{taskForm.title || (taskForm.id ? "Edit task" : "Add task")}</h2><small>Capture the customer, commitment and person responsible before saving.</small></div><button type="button" onClick={() => setShowTaskForm(false)}>×</button></div>
           <div className="form-grid">
+            <label className="wide task-title-field">Task title<input value={taskForm.title || ""} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} required /></label>
+            <label className="wide assigned-task-field">Assigned to<input list="task-staff" value={taskForm.assignedTo || ""} onChange={(event) => setTaskForm({ ...taskForm, assignedTo: event.target.value })} placeholder="Type or choose the staff member responsible" /><small className="field-hint">This person owns the task. You can filter the list by multiple staff names.</small><datalist id="task-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label>Customer name<input value={taskForm.customerName || ""} onChange={(event) => setTaskForm({ ...taskForm, customerName: event.target.value })} /></label>
+            <label>Phone number<input value={taskForm.customerPhone || ""} onChange={(event) => setTaskForm({ ...taskForm, customerPhone: event.target.value, linkedCustomerPhone: event.target.value })} /></label>
+            <label>Enquired products<input value={taskForm.enquiredProducts || ""} onChange={(event) => setTaskForm({ ...taskForm, enquiredProducts: event.target.value })} placeholder="Sofa, cot, dining set…" /></label>
+            <label>Attended by<input list="attended-staff" value={taskForm.attendedBy || ""} onChange={(event) => setTaskForm({ ...taskForm, attendedBy: event.target.value })} /><datalist id="attended-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label>Commitment date<input type="date" value={taskForm.commitmentDate || ""} onChange={(event) => setTaskForm({ ...taskForm, commitmentDate: event.target.value })} /></label>
+            <label>Due date<input type="date" value={taskForm.dueDate || ""} onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })} /></label>
+            <label className="wide customer-notes-field">Customer notes<textarea rows={3} value={taskForm.notes || ""} onChange={(event) => setTaskForm({ ...taskForm, notes: event.target.value })} placeholder="Customer requirement, promised action or follow-up notes…" /></label>
             <label>Category<select disabled={taskCategoryLocked} value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Development", "Recruitment", "Financial Commitment", "Financial", "Delivery", "Complaint", "General"].map((item) => <option key={item}>{item}</option>)}</select>{taskCategoryLocked && <small className="field-hint">Fixed from the quick plan.</small>}</label>
             <label>Priority<select value={taskForm.priority || "Normal"} onChange={(event) => setTaskForm({ ...taskForm, priority: event.target.value })}><option>Low</option><option>Normal</option><option>High</option><option>Urgent</option></select></label>
-            <label className="wide">Task title<input value={taskForm.title || ""} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} required /></label>
             <label className="wide">Details<textarea rows={3} value={taskForm.details || ""} onChange={(event) => setTaskForm({ ...taskForm, details: event.target.value })} /></label>
-            <label className="wide assigned-task-field">Assigned to<input list="task-staff" value={taskForm.assignedTo || ""} onChange={(event) => setTaskForm({ ...taskForm, assignedTo: event.target.value })} placeholder="Type or choose the staff member responsible" /><small className="field-hint">Assign one staff member now; use the staff filter to view multiple people’s work.</small><datalist id="task-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
-            <label>Due date<input type="date" value={taskForm.dueDate || ""} onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })} /></label>
-            {!taskCategoryLocked && <><label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Completed</option></select></label><label>Customer phone<input value={taskForm.linkedCustomerPhone || ""} onChange={(event) => setTaskForm({ ...taskForm, linkedCustomerPhone: event.target.value })} /></label></>}
+            {!taskCategoryLocked && <label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Incomplete</option><option>Completed</option></select></label>}
           </div>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowTaskForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save task once"}</button></div>
+        </form></div>
+      )}
+
+      {incompleteTask && (
+        <div className="modal-backdrop"><form className="modal-card task-reason-modal" onSubmit={saveTaskIncomplete}>
+          <div className="modal-head"><div><span className="eyebrow">Task unfinished</span><h2>Why is this task not complete?</h2><small>{incompleteTask.title}</small></div><button type="button" onClick={() => { setIncompleteTask(null); setIncompleteReason(""); }}>×</button></div>
+          <label className="reason-field">Reason<textarea rows={4} autoFocus value={incompleteReason} onChange={(event) => setIncompleteReason(event.target.value)} placeholder="Add a clear reason so the team knows what to do next…" required /></label>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => { setIncompleteTask(null); setIncompleteReason(""); }}>Cancel</button><button className="primary-small" disabled={busy || !incompleteReason.trim()}>Save unfinished reason</button></div>
         </form></div>
       )}
 

@@ -15,7 +15,12 @@ type BillItemInput = {
 
 type PaymentRecord = { id: string; amount: number; mode: string; note: string; date: string };
 type SupplierInput = { id?: string; name?: string; contactPerson?: string; phone?: string; gstin?: string; address?: string; categories?: string; bankDetails?: string; notes?: string; status?: string };
-type TaskInput = { id?: string; category?: string; title?: string; details?: string; assignedTo?: string; dueDate?: string; priority?: string; status?: string; linkedBillId?: string; linkedCustomerPhone?: string };
+type TaskInput = {
+  id?: string; category?: string; title?: string; details?: string; assignedTo?: string;
+  dueDate?: string; priority?: string; status?: string; linkedBillId?: string; linkedCustomerPhone?: string;
+  customerName?: string; customerPhone?: string; enquiredProducts?: string; attendedBy?: string;
+  commitmentDate?: string; notes?: string; completionReason?: string;
+};
 type InteractionInput = { id?: string; customerName?: string; customerPhone?: string; type?: string; details?: string; assignedTo?: string; nextFollowUp?: string; status?: string; billId?: string };
 type AssignmentInput = { id?: string; billId?: string; billNo?: string; productId?: string; productCode?: string; productName?: string; qty?: number; supplierId?: string; purchaseCost?: number; advancePaid?: number; expectedDate?: string; status?: string; notes?: string };
 type LeadInput = { id?: string; customerName?: string; phone?: string; source?: string; interest?: string; assignedTo?: string; followUpDate?: string; status?: string; notes?: string };
@@ -42,7 +47,7 @@ function cleanList(value: unknown, fallback: string[] = []) {
   return [...new Set(value.map((item) => clean(item)).filter(Boolean))].slice(0, 100);
 }
 
-async function ensureColumn(table: "products" | "bills" | "settings", column: string, definition: string) {
+async function ensureColumn(table: "products" | "bills" | "settings" | "tasks", column: string, definition: string) {
   const info = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
   if (!info.results.some((item: { name: string }) => item.name === column)) {
     await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
@@ -83,6 +88,13 @@ async function ensureSchema() {
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_leads_follow_up ON leads(follow_up_date)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_name TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_phone TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS enquired_products TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS attended_by TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS commitment_date TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_reason TEXT NOT NULL DEFAULT ''"),
     ]);
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)").run();
     await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Smaarthome Furniture','Showroom Billing & Operations',18,'SHF')`).run();
@@ -158,7 +170,7 @@ async function ensureSchema() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
   ]);
 
-  const additions: Array<["products" | "bills" | "settings", string, string]> = [
+  const additions: Array<["products" | "bills" | "settings" | "tasks", string, string]> = [
     ["products", "image_key", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "client_request_id", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "staff_name", "TEXT NOT NULL DEFAULT ''"], ["bills", "counter_name", "TEXT NOT NULL DEFAULT ''"],
@@ -176,6 +188,10 @@ async function ensureSchema() {
     ["settings", "counter_names_json", "TEXT NOT NULL DEFAULT '[\"Counter 1\"]'"],
     ["settings", "default_counter", "TEXT NOT NULL DEFAULT 'Counter 1'"],
     ["settings", "invoice_terms", "TEXT NOT NULL DEFAULT 'Goods once sold cannot be returned without approval.'"],
+    ["tasks", "customer_name", "TEXT NOT NULL DEFAULT ''"], ["tasks", "customer_phone", "TEXT NOT NULL DEFAULT ''"],
+    ["tasks", "enquired_products", "TEXT NOT NULL DEFAULT ''"], ["tasks", "attended_by", "TEXT NOT NULL DEFAULT ''"],
+    ["tasks", "commitment_date", "TEXT NOT NULL DEFAULT ''"], ["tasks", "notes", "TEXT NOT NULL DEFAULT ''"],
+    ["tasks", "completion_reason", "TEXT NOT NULL DEFAULT ''"],
   ];
   for (const [table, column, definition] of additions) await ensureColumn(table, column, definition);
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_bills_delivery_date ON bills(delivery_date)").run();
@@ -244,7 +260,9 @@ async function readState() {
     env.DB.prepare(`SELECT id,name,contact_person AS contactPerson,phone,gstin,address,categories,bank_details AS bankDetails,
       notes,status,created_at AS createdAt,updated_at AS updatedAt FROM suppliers ORDER BY name`).all(),
     env.DB.prepare(`SELECT id,category,title,details,assigned_to AS assignedTo,due_date AS dueDate,priority,status,
-      linked_bill_id AS linkedBillId,linked_customer_phone AS linkedCustomerPhone,created_at AS createdAt,
+      linked_bill_id AS linkedBillId,linked_customer_phone AS linkedCustomerPhone,customer_name AS customerName,
+      customer_phone AS customerPhone,enquired_products AS enquiredProducts,attended_by AS attendedBy,
+      commitment_date AS commitmentDate,notes,completion_reason AS completionReason,created_at AS createdAt,
       updated_at AS updatedAt FROM tasks ORDER BY CASE status WHEN 'Completed' THEN 1 ELSE 0 END,due_date,created_at DESC`).all(),
     env.DB.prepare(`SELECT id,customer_name AS customerName,customer_phone AS customerPhone,type,details,
       assigned_to AS assignedTo,next_follow_up AS nextFollowUp,status,bill_id AS billId,created_at AS createdAt,
@@ -685,17 +703,25 @@ export async function POST(request: Request) {
       const id = clean(value.id) || uid("task");
       const duplicate = await env.DB.prepare(`SELECT id FROM tasks WHERE id<>? AND lower(trim(category))=lower(trim(?))
         AND lower(trim(title))=lower(trim(?)) AND lower(trim(details))=lower(trim(?)) AND lower(trim(assigned_to))=lower(trim(?))
-        AND due_date=? AND linked_customer_phone=? LIMIT 1`).bind(id, clean(value.category, "General"), clean(value.title), clean(value.details),
-          clean(value.assignedTo), clean(value.dueDate), clean(value.linkedCustomerPhone)).first<{ id: string }>();
+        AND due_date=? AND linked_customer_phone=? AND lower(trim(customer_name))=lower(trim(?))
+        AND customer_phone=? AND lower(trim(enquired_products))=lower(trim(?)) AND lower(trim(attended_by))=lower(trim(?))
+        AND commitment_date=? LIMIT 1`).bind(id, clean(value.category, "General"), clean(value.title), clean(value.details),
+          clean(value.assignedTo), clean(value.dueDate), clean(value.linkedCustomerPhone), clean(value.customerName),
+          clean(value.customerPhone), clean(value.enquiredProducts), clean(value.attendedBy), clean(value.commitmentDate)).first<{ id: string }>();
       if (duplicate) return Response.json({ error: "This exact task is already saved. Open the existing task instead of creating a duplicate." }, { status: 409 });
       await env.DB.prepare(`INSERT INTO tasks
-        (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,customer_name,customer_phone,enquired_products,attended_by,commitment_date,notes,completion_reason,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET category=excluded.category,title=excluded.title,details=excluded.details,
         assigned_to=excluded.assigned_to,due_date=excluded.due_date,priority=excluded.priority,status=excluded.status,
-        linked_bill_id=excluded.linked_bill_id,linked_customer_phone=excluded.linked_customer_phone,updated_at=CURRENT_TIMESTAMP`)
+        linked_bill_id=excluded.linked_bill_id,linked_customer_phone=excluded.linked_customer_phone,
+        customer_name=excluded.customer_name,customer_phone=excluded.customer_phone,enquired_products=excluded.enquired_products,
+        attended_by=excluded.attended_by,commitment_date=excluded.commitment_date,notes=excluded.notes,
+        completion_reason=excluded.completion_reason,updated_at=CURRENT_TIMESTAMP`)
         .bind(id, clean(value.category, "General"), clean(value.title), clean(value.details), clean(value.assignedTo), clean(value.dueDate),
-          clean(value.priority, "Normal"), clean(value.status, "Pending"), clean(value.linkedBillId), clean(value.linkedCustomerPhone)).run();
+          clean(value.priority, "Normal"), clean(value.status, "Pending"), clean(value.linkedBillId), clean(value.linkedCustomerPhone),
+          clean(value.customerName), clean(value.customerPhone), clean(value.enquiredProducts), clean(value.attendedBy),
+          clean(value.commitmentDate), clean(value.notes), clean(value.completionReason)).run();
     } else if (action === "deleteTask") {
       await env.DB.prepare("DELETE FROM tasks WHERE id=?").bind(clean(payload.id)).run();
     } else if (action === "saveInteraction") {
@@ -853,14 +879,19 @@ export async function POST(request: Request) {
       }
       for (let index = 0; index < importedTasks.length; index += 60) {
         await env.DB.batch(importedTasks.slice(index, index + 60).map((value) => env.DB.prepare(`INSERT INTO tasks
-          (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,created_at,updated_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET category=excluded.category,title=excluded.title,
+          (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,customer_name,customer_phone,enquired_products,attended_by,commitment_date,notes,completion_reason,created_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET category=excluded.category,title=excluded.title,
           details=excluded.details,assigned_to=excluded.assigned_to,due_date=excluded.due_date,priority=excluded.priority,
           status=excluded.status,linked_bill_id=excluded.linked_bill_id,linked_customer_phone=excluded.linked_customer_phone,
+          customer_name=excluded.customer_name,customer_phone=excluded.customer_phone,enquired_products=excluded.enquired_products,
+          attended_by=excluded.attended_by,commitment_date=excluded.commitment_date,notes=excluded.notes,
+          completion_reason=excluded.completion_reason,
           updated_at=excluded.updated_at`)
           .bind(clean(value.id) || uid("task"), clean(value.category, "General"), clean(value.title), clean(value.details),
             clean(value.assignedTo), clean(value.dueDate), clean(value.priority, "Normal"), clean(value.status, "Pending"),
-            clean(value.linkedBillId), clean(value.linkedCustomerPhone), clean(value.createdAt, new Date().toISOString()),
+            clean(value.linkedBillId), clean(value.linkedCustomerPhone), clean(value.customerName), clean(value.customerPhone),
+            clean(value.enquiredProducts), clean(value.attendedBy), clean(value.commitmentDate), clean(value.notes),
+            clean(value.completionReason), clean(value.createdAt, new Date().toISOString()),
             clean(value.updatedAt, new Date().toISOString()))));
       }
       for (let index = 0; index < importedInteractions.length; index += 60) {

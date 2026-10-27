@@ -103,9 +103,24 @@ create table if not exists public.tasks (
   status text not null default 'Pending',
   linked_bill_id text not null default '',
   linked_customer_phone text not null default '',
+  customer_name text not null default '',
+  customer_phone text not null default '',
+  enquired_products text not null default '',
+  attended_by text not null default '',
+  commitment_date text not null default '',
+  notes text not null default '',
+  completion_reason text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.tasks add column if not exists customer_name text not null default '';
+alter table public.tasks add column if not exists customer_phone text not null default '';
+alter table public.tasks add column if not exists enquired_products text not null default '';
+alter table public.tasks add column if not exists attended_by text not null default '';
+alter table public.tasks add column if not exists commitment_date text not null default '';
+alter table public.tasks add column if not exists notes text not null default '';
+alter table public.tasks add column if not exists completion_reason text not null default '';
 
 create table if not exists public.customer_interactions (
   id text primary key,

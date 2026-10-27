@@ -58,6 +58,9 @@ test("includes showroom CRM, resilient billing, stock checks and production work
   assert.match(page, /Fixed from the quick plan/);
   assert.match(page, /follow-up-notes-field/);
   assert.match(page, /taskCategoryLocked/);
+  assert.match(page, /Customer notes/);
+  assert.match(page, /Mark task unfinished/);
+  assert.match(page, /Name A–Z/);
   assert.match(expo, /Order saved but follow-up automation failed/);
   assert.match(expo, /Primary action saved but audit logging failed/);
   assert.match(expo, /type='Happy Call'/);
@@ -68,4 +71,7 @@ test("includes showroom CRM, resilient billing, stock checks and production work
   assert.match(schema, /create table if not exists public\.job_cards/i);
   assert.match(schema, /create table if not exists public\.held_orders/i);
   assert.match(schema, /create table if not exists public\.stock_verifications/i);
+  assert.match(expo, /enquired_products/);
+  assert.match(expo, /completion_reason/);
+  assert.match(schema, /alter table public\.tasks add column if not exists customer_name/i);
 });
