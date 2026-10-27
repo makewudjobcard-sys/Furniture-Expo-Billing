@@ -53,6 +53,11 @@ test("includes showroom CRM, resilient billing, stock checks and production work
   assert.match(page, /WhatsApp invoice/);
   assert.match(page, /Delivery month at a glance/);
   assert.match(page, /Retry save/);
+  assert.match(page, /Assigned staff A–Z/);
+  assert.match(page, /Staff filter/);
+  assert.match(page, /Fixed from the quick plan/);
+  assert.match(page, /follow-up-notes-field/);
+  assert.match(page, /taskCategoryLocked/);
   assert.match(expo, /Order saved but follow-up automation failed/);
   assert.match(expo, /Primary action saved but audit logging failed/);
   assert.match(expo, /type='Happy Call'/);
