@@ -260,7 +260,7 @@ const deliveryStages = ["Order Booked", "Supplier Assigned", "In Production", "R
 const taskTemplates = [
   { icon: "☎", category: "Follow-up", title: "Customer follow-up", details: "Call the customer and record the next action." },
   { icon: "✦", category: "Cleaning", title: "Showroom cleaning check", details: "Check entrance, displays, products and billing counter." },
-  { icon: "◎", category: "Marketing", title: "Marketing activity", details: "Plan today’s promotion, social post or lead follow-up." },
+  { icon: "✺", category: "Marketing", title: "Marketing activity", details: "Plan today’s promotion, social post or lead follow-up." },
   { icon: "↗", category: "Development", title: "Business development", details: "Review improvement ideas, staff needs and showroom growth work." },
   { icon: "₹", category: "Financial Commitment", title: "Payment commitment", details: "Record the payable/receivable amount and completion plan." },
 ];
@@ -461,6 +461,8 @@ export default function Home() {
   const [manualScanCode, setManualScanCode] = useState("");
   const [operationsTab, setOperationsTab] = useState<"tasks" | "customers" | "leads" | "jobs">("tasks");
   const [taskFilter, setTaskFilter] = useState<"active" | "completed" | "all">("active");
+  const [taskSort, setTaskSort] = useState<"newest" | "assigned" | "due">("newest");
+  const [taskStaffFilter, setTaskStaffFilter] = useState<string[]>([]);
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeName>("forest");
@@ -486,6 +488,7 @@ export default function Home() {
   const [restoredOffline, setRestoredOffline] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
+  const [taskCategoryLocked, setTaskCategoryLocked] = useState(false);
   const [interactionForm, setInteractionForm] = useState<Partial<CustomerInteraction>>({ type: "Follow-up", status: "Open" });
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -1512,7 +1515,7 @@ export default function Home() {
     taskSaveLockRef.current = true;
     try {
       const data = await mutate({ action: "saveTask", task: taskForm }, taskForm.id ? "Task updated." : "Task added to dashboard.");
-      if (data) { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending" }); setShowTaskForm(false); }
+      if (data) { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending" }); setTaskCategoryLocked(false); setShowTaskForm(false); }
     } finally {
       taskSaveLockRef.current = false;
     }
@@ -1862,7 +1865,7 @@ export default function Home() {
       .map((bill) => ({ id: `delivery-${bill.id}`, group: "urgent" as const, icon: "⇢", title: `Delayed delivery · ${bill.customerName}`, detail: `${bill.billNo} · Expected ${bill.deliveryDate}`, action: "View order", open: () => setSelectedBill(bill) })),
     ...openComplaints.map((item) => ({ id: `complaint-${item.id}`, group: "urgent" as const, icon: "!", title: `Complaint · ${item.customerName}`, detail: item.details, action: "Resolve", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...supplierOrdersDelayed.map((item) => ({ id: `supplier-${item.id}`, group: "urgent" as const, icon: "◇", title: `Supplier delay · ${item.productName}`, detail: `${item.billNo} · Expected ${item.expectedDate}`, action: "Update", open: () => setActive("suppliers") })),
-    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: (["High", "Urgent"].includes(task.priority) ? "urgent" : "today") as "urgent" | "today", icon: "✓", title: task.title, detail: `${task.category}${task.assignedTo ? ` · ${task.assignedTo}` : ""}${task.dueDate ? ` · Due ${task.dueDate}` : ""}`, action: "Done", open: () => { setTaskForm(task); setShowTaskForm(true); }, perform: () => mutate({ action: "saveTask", task: { ...task, status: "Completed" } }, "Task completed. Open Completed history to view or reopen it.") })),
+    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: (["High", "Urgent"].includes(task.priority) ? "urgent" : "today") as "urgent" | "today", icon: "✓", title: task.title, detail: `${task.category}${task.assignedTo ? ` · ${task.assignedTo}` : ""}${task.dueDate ? ` · Due ${task.dueDate}` : ""}`, action: "Done", open: () => { setTaskForm(task); setTaskCategoryLocked(false); setShowTaskForm(true); }, perform: () => mutate({ action: "saveTask", task: { ...task, status: "Completed" } }, "Task completed. Open Completed history to view or reopen it.") })),
     ...followUpsDue.filter((item) => item.type !== "Complaint").map((item) => ({ id: `follow-${item.id}`, group: "today" as const, icon: "☎", title: `${item.type} · ${item.customerName}`, detail: `${item.customerPhone}${item.details ? ` · ${item.details}` : ""}`, action: "Open", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...activeBills.filter((bill) => bill.deliveryStatus !== "Delivered" && bill.deliveryDate === isoDate()).map((bill) => ({ id: `today-delivery-${bill.id}`, group: "today" as const, icon: "⇢", title: `Delivery today · ${bill.customerName}`, detail: `${bill.billNo} · ${bill.customerPhone}`, action: "View", open: () => setSelectedBill(bill) })),
     ...activeBills.filter((bill) => bill.balanceAmount > 0).map((bill) => ({ id: `balance-${bill.id}`, group: "today" as const, icon: "₹", title: `Collect balance · ${bill.customerName}`, detail: `${bill.billNo} · ${money(bill.balanceAmount)}`, action: "Collect", open: () => setSelectedBill(bill) })),
@@ -1872,9 +1875,15 @@ export default function Home() {
   const completedTasks = state.tasks
     .filter((task) => task.status === "Completed")
     .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-  const visibleTasks = state.tasks.filter((task) =>
-    taskFilter === "all" || (taskFilter === "completed" ? task.status === "Completed" : task.status !== "Completed"),
-  );
+  const taskStaffOptions = Array.from(new Set([...state.settings.staffNames, ...state.tasks.map((task) => task.assignedTo)].map((name) => name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const visibleTasks = state.tasks
+    .filter((task) => taskFilter === "all" || (taskFilter === "completed" ? task.status === "Completed" : task.status !== "Completed"))
+    .filter((task) => !taskStaffFilter.length || taskStaffFilter.includes(task.assignedTo))
+    .sort((a, b) => {
+      if (taskSort === "assigned") return (a.assignedTo || "Unassigned").localeCompare(b.assignedTo || "Unassigned") || (b.updatedAt || "").localeCompare(a.updatedAt || "");
+      if (taskSort === "due") return (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") || (b.updatedAt || "").localeCompare(a.updatedAt || "");
+      return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "");
+    });
   const currentMonth = isoDate().slice(0, 7);
   const staffPerformance = [...activeBills
     .filter((bill) => bill.createdAt.slice(0, 7) === currentMonth)
@@ -2056,7 +2065,7 @@ export default function Home() {
                 <p>Today’s priorities, completed work, collections, deliveries and staff performance in one view.</p>
               </div>
               <div className="heading-actions">
-                <button className="secondary-action" onClick={() => { setTaskForm({ category: "General", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
+                <button className="secondary-action" onClick={() => { setTaskCategoryLocked(false); setTaskForm({ category: "General", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
                 <button className="primary-small" onClick={() => setActive("billing")}>＋ New order</button>
               </div>
             </div>
@@ -2072,6 +2081,7 @@ export default function Home() {
               </div>
               <div className="quick-plan-actions">
                 {taskTemplates.map((template) => <button key={template.category} onClick={() => {
+                  setTaskCategoryLocked(true);
                   setTaskForm({ category: template.category, title: template.title, details: template.details, priority: "Normal", status: "Pending", dueDate: isoDate() });
                   setShowTaskForm(true);
                 }}><span>{template.icon}</span><strong>{template.title}</strong><small>{template.category}</small></button>)}
@@ -3014,7 +3024,7 @@ export default function Home() {
             <div className="section-heading with-actions">
               <div><span className="eyebrow">Task centre</span><h1>Plan work. Finish it. Keep the history.</h1><p>Follow-ups, cleaning, marketing, development, commitments, complaints and service work in one simple place.</p></div>
               <div className="heading-actions">
-                <button className="secondary-action" onClick={() => { setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
+                <button className="secondary-action" onClick={() => { setTaskCategoryLocked(false); setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
                 <button className="primary-small" onClick={() => { setInteractionForm({ type: "Follow-up", status: "Open", nextFollowUp: isoDate() }); setShowInteractionForm(true); }}>＋ Customer activity</button>
                 <button className="secondary-action" onClick={() => { setLeadForm({ source: "Walk-in", status: "New", followUpDate: isoDate() }); setShowLeadForm(true); }}>＋ Walk-in lead</button>
                 <button className="secondary-action" onClick={() => { setJobCardForm({ stage: "New", referenceImages: [] }); setJobReferenceFiles([]); setShowJobCardForm(true); }}>＋ Job card</button>
@@ -3035,14 +3045,14 @@ export default function Home() {
               <button className={operationsTab === "jobs" ? "active" : ""} onClick={() => setOperationsTab("jobs")}>Custom job cards</button>
             </div>
             {operationsTab === "tasks" ? (
-              <><div className="task-filter" role="group" aria-label="Task history filter">
+              <><div className="task-toolbar"><div className="task-filter" role="group" aria-label="Task history filter">
                 <button className={taskFilter === "active" ? "active" : ""} onClick={() => setTaskFilter("active")}>Active <span>{openTasks.length}</span></button>
                 <button className={taskFilter === "completed" ? "active" : ""} onClick={() => setTaskFilter("completed")}>Completed <span>{completedTasks.length}</span></button>
                 <button className={taskFilter === "all" ? "active" : ""} onClick={() => setTaskFilter("all")}>All <span>{state.tasks.length}</span></button>
-              </div><div className="table-wrap"><table><thead><tr><th>Task</th><th>Category</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
+              </div><div className="task-sort-controls"><label>Sort tasks<select value={taskSort} onChange={(event) => setTaskSort(event.target.value as typeof taskSort)}><option value="newest">New to old</option><option value="assigned">Assigned staff A–Z</option><option value="due">Due date</option></select></label><label>Staff filter<select multiple size={Math.min(4, Math.max(2, taskStaffOptions.length))} value={taskStaffFilter} onChange={(event) => setTaskStaffFilter(Array.from(event.target.selectedOptions, (option) => option.value))}>{taskStaffOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>{taskStaffFilter.length > 0 && <button className="text-button" onClick={() => setTaskStaffFilter([])}>Clear staff</button>}</div></div><div className="table-wrap"><table><thead><tr><th>Task</th><th>Category</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
                 {visibleTasks.map((task) => <tr key={task.id} className={task.status !== "Completed" && task.dueDate && task.dueDate < isoDate() ? "overdue-row" : ""}>
                   <td><strong>{task.title}</strong><small className="block-muted">{task.details || "No details"}</small></td><td>{task.category}</td><td>{task.assignedTo || "—"}</td><td>{task.dueDate || "Not set"}</td><td><span className={`priority ${task.priority.toLowerCase()}`}>{task.priority}</span></td><td>{task.status}</td>
-                  <td><div className="row-actions"><button onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "Reopen" : "Done"}</button><button onClick={() => { setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></div></td>
+                  <td><div className="row-actions"><button onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "Reopen" : "Done"}</button><button onClick={() => { setTaskCategoryLocked(false); setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></div></td>
                 </tr>)}
                 {!visibleTasks.length && <tr><td colSpan={7} className="empty-table">{taskFilter === "completed" ? "No completed tasks yet. Finished work will remain here." : taskFilter === "active" ? "No active tasks. Add a showroom activity or reopen one from Completed." : "No tasks yet. Add your first showroom activity."}</td></tr>}
               </tbody></table></div></>
@@ -4066,14 +4076,13 @@ export default function Home() {
         <div className="modal-backdrop"><form className="modal-card" onSubmit={saveTask}>
           <div className="modal-head"><div><span className="eyebrow">Task & schedule</span><h2>{taskForm.id ? "Edit task" : "Add task"}</h2></div><button type="button" onClick={() => setShowTaskForm(false)}>×</button></div>
           <div className="form-grid">
-            <label>Category<select value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Development", "Recruitment", "Financial Commitment", "Financial", "Delivery", "Complaint", "General"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Category<select disabled={taskCategoryLocked} value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Development", "Recruitment", "Financial Commitment", "Financial", "Delivery", "Complaint", "General"].map((item) => <option key={item}>{item}</option>)}</select>{taskCategoryLocked && <small className="field-hint">Fixed from the quick plan.</small>}</label>
             <label>Priority<select value={taskForm.priority || "Normal"} onChange={(event) => setTaskForm({ ...taskForm, priority: event.target.value })}><option>Low</option><option>Normal</option><option>High</option><option>Urgent</option></select></label>
             <label className="wide">Task title<input value={taskForm.title || ""} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} required /></label>
             <label className="wide">Details<textarea rows={3} value={taskForm.details || ""} onChange={(event) => setTaskForm({ ...taskForm, details: event.target.value })} /></label>
-            <label>Assigned staff<input list="task-staff" value={taskForm.assignedTo || ""} onChange={(event) => setTaskForm({ ...taskForm, assignedTo: event.target.value })} /><datalist id="task-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label className="wide assigned-task-field">Assigned to<input list="task-staff" value={taskForm.assignedTo || ""} onChange={(event) => setTaskForm({ ...taskForm, assignedTo: event.target.value })} placeholder="Type or choose the staff member responsible" /><small className="field-hint">Assign one staff member now; use the staff filter to view multiple people’s work.</small><datalist id="task-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
             <label>Due date<input type="date" value={taskForm.dueDate || ""} onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })} /></label>
-            <label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Completed</option></select></label>
-            <label>Customer phone<input value={taskForm.linkedCustomerPhone || ""} onChange={(event) => setTaskForm({ ...taskForm, linkedCustomerPhone: event.target.value })} /></label>
+            {!taskCategoryLocked && <><label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Completed</option></select></label><label>Customer phone<input value={taskForm.linkedCustomerPhone || ""} onChange={(event) => setTaskForm({ ...taskForm, linkedCustomerPhone: event.target.value })} /></label></>}
           </div>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowTaskForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save task once"}</button></div>
         </form></div>
@@ -4089,7 +4098,7 @@ export default function Home() {
             <label>Next follow-up<input type="date" value={interactionForm.nextFollowUp || ""} onChange={(event) => setInteractionForm({ ...interactionForm, nextFollowUp: event.target.value })} /></label>
             <label>Assigned staff<input list="crm-staff" value={interactionForm.assignedTo || ""} onChange={(event) => setInteractionForm({ ...interactionForm, assignedTo: event.target.value })} /><datalist id="crm-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
             <label>Status<select value={interactionForm.status || "Open"} onChange={(event) => setInteractionForm({ ...interactionForm, status: event.target.value })}><option>Open</option><option>In progress</option><option>Closed</option></select></label>
-            <label className="wide">Details / resolution<textarea rows={4} value={interactionForm.details || ""} onChange={(event) => setInteractionForm({ ...interactionForm, details: event.target.value })} required /></label>
+            <label className="wide follow-up-notes-field">Notes<textarea rows={4} value={interactionForm.details || ""} onChange={(event) => setInteractionForm({ ...interactionForm, details: event.target.value })} placeholder="Add the customer’s requirement, conversation summary or next action…" required /></label>
           </div>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowInteractionForm(false)}>Cancel</button><button className="primary-small">Save activity</button></div>
         </form></div>

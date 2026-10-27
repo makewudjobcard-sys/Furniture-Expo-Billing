@@ -1191,10 +1191,10 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 
 /* Dashboard colour motion: keep the action count quiet, let the useful tabs breathe. */
 .dashboard-page .today-count {
-  background: transparent;
+  background: #dfeee6;
   color: var(--ink);
-  border: 1px solid var(--line);
-  box-shadow: none;
+  border: 1px solid #b8d6c5;
+  box-shadow: 0 10px 24px rgba(48,112,84,.12);
 }
 .dashboard-page .today-count strong { color: var(--ink); }
 .dashboard-page .today-count small { color: var(--muted); }
@@ -1218,6 +1218,23 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 .dashboard-page .dashboard-grid > .dashboard-card:nth-child(2) { background-image: linear-gradient(135deg, #ffffff, #f2f7ff, #fff8ef); animation-delay: -9s; }
 .dashboard-page .staff-performance { background-image: linear-gradient(135deg, #ffffff, #f8f4ff, #f0faf5); animation-delay: -6s; }
 
+/* Action count stays a clear, solid status block instead of blending into the page. */
+.dashboard-page .today-count strong { color: #1d5c44; }
+.dashboard-page .today-count span { color: #245b46; }
+.dashboard-page .today-count small { color: #4e7965; }
+.quick-plan-actions button > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: rgba(255,255,255,.72); color: var(--clay); font-size: 30px; line-height: 1; font-weight: 900; text-shadow: 0 1px 0 rgba(255,255,255,.55); }
+.quick-plan-actions button strong { font-weight: 800; }
+.task-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.task-sort-controls { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin: 16px 0 10px; }
+.task-sort-controls label { display: grid; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.task-sort-controls select { min-width: 155px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 9px 10px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+.task-sort-controls select[multiple] { min-width: 175px; min-height: 42px; max-height: 92px; padding: 6px; }
+.task-sort-controls select[multiple] option { padding: 4px 6px; border-radius: 6px; }
+.assigned-task-field { padding: 14px; border: 1px solid #b8d6c5; border-radius: 14px; background: #f0f7f2; }
+.assigned-task-field input { min-height: 46px; font-size: 13px; font-weight: 650; border-color: #a9cdb8; }
+.field-hint { color: var(--muted); font-size: 9px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.follow-up-notes-field textarea { min-height: 112px; }
+
 @keyframes dashboard-colour-drift {
   0%, 100% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
@@ -1228,4 +1245,17 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 :root[data-theme="midnight"] .dashboard-page .dashboard-grid > .dashboard-card,
 :root[data-theme="midnight"] .dashboard-page .staff-performance {
   background-image: linear-gradient(135deg, #18283a, #202d3d, #24384a);
+}
+:root[data-theme="midnight"] .dashboard-page .today-count { background: #203b35; border-color: #3f7560; color: #e9fff4; }
+:root[data-theme="midnight"] .dashboard-page .today-count strong,
+:root[data-theme="midnight"] .dashboard-page .today-count span,
+:root[data-theme="midnight"] .dashboard-page .today-count small { color: #d9f6e7; }
+:root[data-theme="midnight"] .assigned-task-field { background: #1c332d; border-color: #3f7560; }
+
+@media (max-width: 760px) {
+  .task-toolbar { align-items: stretch; }
+  .task-sort-controls { align-items: stretch; width: 100%; }
+  .task-sort-controls label { flex: 1 1 150px; }
+  .task-sort-controls select { width: 100%; }
+  .task-sort-controls select[multiple] { min-height: 76px; }
 }
