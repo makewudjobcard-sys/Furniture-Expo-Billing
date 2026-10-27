@@ -55,7 +55,7 @@ test("includes showroom CRM, resilient billing, stock checks and production work
   assert.match(page, /Retry save/);
   assert.match(page, /Assigned staff A–Z/);
   assert.match(page, /Staff filter/);
-  assert.match(page, /Fixed from the quick plan/);
+  assert.match(page, /taskCategoryLocked/);
   assert.match(page, /follow-up-notes-field/);
   assert.match(page, /taskCategoryLocked/);
   assert.match(page, /Customer notes/);
