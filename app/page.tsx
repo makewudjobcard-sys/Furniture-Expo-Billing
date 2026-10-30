@@ -2832,10 +2832,10 @@ export default function Home() {
         )}
 
         {active === "products" && (
-          <section className="page-section">
+          <section className="page-section inventory-page">
             <div className="section-heading with-actions">
               <div>
-                <span className="eyebrow">Inventory & images</span>
+                <span className="eyebrow inventory-eyebrow"><i>▦</i> Inventory & images</span>
                 <h1>Every piece, pictured.</h1>
                 <p>
                   Excel-embedded images and Product Code image files both sync
@@ -2859,21 +2859,21 @@ export default function Home() {
                   onChange={importBulkImages}
                 />
                 <button className="secondary-action" onClick={downloadTemplate}>
-                  ↓ Template
+                  <span className="button-icon">↓</span> Template
                 </button>
                 <button
                   className="secondary-action"
                   onClick={() => fileRef.current?.click()}
                 >
-                  ↑ Import Excel
+                  <span className="button-icon">↑</span> Import Excel
                 </button>
                 <button
                   className="secondary-action"
                   onClick={() => bulkImagesRef.current?.click()}
                 >
-                  ▧ Bulk images
+                  <span className="button-icon">▧</span> Bulk images
                 </button>
-                <button className="secondary-action" onClick={startStockVerification}>✓ Verify physical stock</button>
+                <button className="secondary-action" onClick={startStockVerification}><span className="button-icon">✓</span> Verify physical stock</button>
                 <button
                   className="primary-small"
                   onClick={() => {
@@ -2881,7 +2881,7 @@ export default function Home() {
                     setShowProductForm(true);
                   }}
                 >
-                  ＋ Add product
+                  <span className="button-icon">＋</span> Add product
                 </button>
               </div>
             </div>
@@ -2890,16 +2890,19 @@ export default function Home() {
                 label="Product models"
                 value={String(state.products.length)}
                 note="Active catalogue"
+                icon="▤"
               />
               <Metric
                 label="Ready stock"
                 value={String(totalStock)}
                 note="Pieces available"
+                icon="✓"
               />
               <Metric
                 label="Inventory value"
                 value={money(inventoryValue)}
                 note="At showroom price"
+                icon="₹"
               />
               <Metric
                 label="Low / out stock"
@@ -2909,11 +2912,12 @@ export default function Home() {
                 )}
                 note="Needs attention"
                 alert
+                icon="!"
               />
             </div>
             <div className="inventory-toolbar">
               <label className="search-box compact-search">
-                <span>⌕</span>
+                <span className="search-icon">⌕</span>
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
@@ -2923,8 +2927,8 @@ export default function Home() {
               <div className="stock-filters" aria-label="Stock filters">
                 {[["all", "All"], ["available", "Available"], ["low", "Low"], ["out", "Out"]].map(([key, label]) => <button key={key} className={stockFilter === key ? "active" : ""} onClick={() => setStockFilter(key)}>{label}</button>)}
               </div>
-              <button className="text-button" onClick={() => load()}>
-                ↻ Refresh stock
+              <button className="text-button refresh-stock-button" onClick={() => load()}>
+                <span className="button-icon">↻</span> Refresh stock
               </button>
             </div>
             <div className="table-wrap">
@@ -2980,11 +2984,11 @@ export default function Home() {
                       </td>
                       <td>
                         <div className="row-actions">
-                          <button onClick={() => setQrProduct(product)}>
-                            QR
+                          <button className="icon-action" onClick={() => setQrProduct(product)} aria-label={`Show QR for ${product.name}`}>
+                            <span>⌗</span> QR
                           </button>
-                          <button onClick={() => editProduct(product)}>
-                            Edit
+                          <button className="icon-action" onClick={() => editProduct(product)}>
+                            <span>✎</span> Edit
                           </button>
                           <button
                             className="danger-link"
@@ -2996,7 +3000,7 @@ export default function Home() {
                               )
                             }
                           >
-                            Delete
+                            <span>⌫</span> Delete
                           </button>
                         </div>
                       </td>
@@ -4531,15 +4535,17 @@ function Metric({
   value,
   note,
   alert = false,
+  icon,
 }: {
   label: string;
   value: string;
   note: string;
   alert?: boolean;
+  icon?: string;
 }) {
   return (
     <article className={`metric-card ${alert ? "alert" : ""}`}>
-      <span>{label}</span>
+      <span className="metric-label">{icon && <i>{icon}</i>}{label}</span>
       <strong>{value}</strong>
       {note && <small>{note}</small>}
     </article>
