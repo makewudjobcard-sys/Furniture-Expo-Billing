@@ -217,6 +217,39 @@ create table if not exists public.stock_verifications (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.finance_commitments (
+  id text primary key,
+  amount double precision not null default 0,
+  payee text not null default '',
+  due_date text not null default '',
+  account_head text not null default '',
+  raised_by text not null default '',
+  approved_by text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.finance_expenses (
+  id text primary key,
+  amount double precision not null default 0,
+  payee text not null default '',
+  automated_date text not null default '',
+  account_head text not null default '',
+  raised_by text not null default '',
+  approved_by text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.finance_controls (
+  id integer primary key check (id = 1),
+  account_fund double precision not null default 0,
+  cash_in_hand double precision not null default 0,
+  delivered_collection double precision not null default 0,
+  pending_collection double precision not null default 0,
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists idx_products_category on public.products(category);
 create index if not exists idx_bills_created_at on public.bills(created_at desc);
 create index if not exists idx_bills_delivery_date on public.bills(delivery_date);
@@ -224,6 +257,7 @@ create unique index if not exists idx_bills_client_request_id on public.bills(cl
 create index if not exists idx_audit_logs_created_at on public.audit_logs(created_at desc);
 create index if not exists idx_leads_follow_up on public.leads(follow_up_date);
 create index if not exists idx_job_cards_expected on public.job_cards(expected_date);
+insert into public.finance_controls (id) values (1) on conflict do nothing;
 
 create or replace function public.furniture_bill_stock_guard()
 returns trigger language plpgsql security definer set search_path = public as $$
