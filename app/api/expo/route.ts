@@ -456,10 +456,11 @@ export async function POST(request: Request) {
       const result = await env.DB.prepare("UPDATE products SET stock_qty=MAX(0,stock_qty+?),updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(delta, id).run();
       if (!result.meta.changes) return Response.json({ error: "Product was not found." }, { status: 404 });
     } else if (action === "createBill") {
+      if (user.role === "md") return Response.json({ error: "Managing Director login is view-only. Use a showroom login to create a new order." }, { status: 403 });
       const bill = payload.bill as Record<string, unknown>;
       const clientRequestId = clean(bill?.clientRequestId) || crypto.randomUUID();
       const existing = await env.DB.prepare("SELECT id FROM bills WHERE client_request_id=?").bind(clientRequestId).first();
-      if (existing) return Response.json(await readState(user.role === "md" ? "all" : user.clientKey), { headers: { "Cache-Control": "no-store" } });
+      if (existing) return Response.json(await readState(user.clientKey), { headers: { "Cache-Control": "no-store" } });
       const customerName = clean(bill?.customerName);
       const customerPhone = clean(bill?.customerPhone);
       if (!customerName || !customerPhone) return Response.json({ error: "Customer name and phone number are required." }, { status: 400 });
@@ -522,7 +523,7 @@ export async function POST(request: Request) {
           discount, taxableValue, cgst, sgst, gst, grandTotal, paidAmount, balanceAmount, paymentMode, JSON.stringify(history),
           clean(bill.deliveryDate), "Order Booked", clean(bill.orderNotes), clean(bill.accountantName), clean(bill.managerName),
           "order_slip", "confirmed", clientRequestId).run();
-      if (!inserted.meta.changes) return Response.json(await readState(user.role === "md" ? "all" : user.clientKey), { headers: { "Cache-Control": "no-store" } });
+      if (!inserted.meta.changes) return Response.json(await readState(user.clientKey), { headers: { "Cache-Control": "no-store" } });
       const deliveryDate = clean(bill.deliveryDate);
       const followUpDate = new Date(now.getTime() + 86400000).toISOString().slice(0, 10);
       const followUpStatements = [

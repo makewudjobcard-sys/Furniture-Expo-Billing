@@ -1307,6 +1307,22 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 :root[data-theme="midnight"] .sidebar .role-badge,:root[data-theme="midnight"] .sidebar .sync-card { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.12); }
 :root[data-theme="midnight"] .sidebar .role-badge strong,:root[data-theme="midnight"] .sidebar .sync-card strong { color:#fff; }
 
+/* Keep the default navigation neutral and readable; only Midnight intentionally uses a dark rail. */
+:root:not([data-theme="midnight"]) .sidebar { background:#edf5f1 !important; color:#20372f !important; }
+:root:not([data-theme="midnight"]) .sidebar nav button b,
+:root:not([data-theme="midnight"]) .sidebar .nav-section-label,
+:root:not([data-theme="midnight"]) .sidebar .brand-mark strong,
+:root:not([data-theme="midnight"]) .sidebar .role-badge strong,
+:root:not([data-theme="midnight"]) .sidebar .sync-card strong { color:#20372f !important; }
+:root:not([data-theme="midnight"]) .sidebar nav button { color:#557067 !important; }
+:root:not([data-theme="midnight"]) .sidebar nav button:hover,
+:root:not([data-theme="midnight"]) .sidebar nav button.active { background:#ffffff !important; color:#20372f !important; }
+
+/* The centered customer/payment wizard must stay inside the content column, not under the rail. */
+.wizard-step-1 .billing-progress,.wizard-step-3 .billing-progress { width:100% !important; margin-left:0 !important; }
+.wizard-step-1 .wizard-cart,.wizard-step-3 .wizard-cart { max-width:100%; overflow:visible; }
+.customer-fields,.customer-fields > *, .customer-fields .field-pair { min-width:0; }
+
 .login-tabs { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:24px; padding:5px; border:1px solid var(--line); border-radius:13px; background:#f0f4f1; }
 .login-tabs button { min-height:44px; border:0; border-radius:9px; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; font-weight:800; }
 .login-tabs button.active { background:var(--surface); color:var(--success); box-shadow:0 5px 16px rgba(48,112,84,.1); }
@@ -1327,6 +1343,7 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 .post-save-job-card-box > div strong { font-size:14px; }
 .post-save-job-card-box > div small { color:var(--muted); font-size:11px; }
 .custom-image-preview { width:100%; max-height:160px; object-fit:cover; border:1px solid var(--line); border-radius:12px; margin-top:6px; }
+.cancelled-lock-note { padding:14px 16px; border:1px solid #e0b7b1; border-radius:13px; background:#fff0ee; color:#9b332b; font-size:11px; font-weight:750; line-height:1.5; }
 .form-grid label,.customer-fields label,.checkout-step label,.payment-pair label { min-width:0; }
 .form-grid input,.form-grid select,.form-grid textarea,.customer-fields input,.customer-fields select,.customer-fields textarea,.checkout-step input,.checkout-step select,.checkout-step textarea { max-width:100%; min-width:0; }
 .modal-card,.cart-panel,.cart-scroll-area { min-width:0; }

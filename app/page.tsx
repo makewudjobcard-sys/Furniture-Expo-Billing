@@ -535,7 +535,10 @@ export default function Home() {
 
   useEffect(() => {
     const saved = window.localStorage.getItem("smaarthome-theme") as ThemeName | null;
-    const next = themes.some((item) => item.id === saved) ? saved! : "teak";
+    const savedTheme = themes.some((item) => item.id === saved) ? saved! : "teak";
+    // The old Ocean selection produced the blue rail shown in the previous UI;
+    // migrate that saved preference to the neutral Clean White workspace once.
+    const next = savedTheme === "ocean" ? "light" : savedTheme;
     const savedDensity = window.localStorage.getItem("smaarthome-density") as DensityName | null;
     const nextDensity = savedDensity === "compact" ? "compact" : "comfortable";
     const savedFont = window.localStorage.getItem("smaarthome-font") as FontName | null;
@@ -548,6 +551,7 @@ export default function Home() {
       setFontName(nextFont);
       setTextScale(nextScale);
       document.documentElement.dataset.theme = next;
+      if (savedTheme === "ocean") window.localStorage.setItem("smaarthome-theme", next);
       document.documentElement.dataset.density = nextDensity;
       document.documentElement.dataset.font = nextFont;
       document.documentElement.dataset.textScale = nextScale;
@@ -606,6 +610,7 @@ export default function Home() {
       if (!response.ok) throw new Error(result.error || "Unable to sign in.");
       setAuthStatus("logged_in");
       setCurrentUser(result.user || null);
+      setActive("dashboard");
       window.localStorage.setItem("smaarthome-offline-session", "ready");
       setLoginForm({ username: "", password: "" });
     } catch (error) {
@@ -1175,6 +1180,10 @@ export default function Home() {
   }
 
   function startNewOrder() {
+    if (currentUser?.role === "md") {
+      notify("Managing Director login is view-only. Sign in to a showroom to create a new order.");
+      return;
+    }
     clearBillingDraft();
     setSavedBillForJobCard(null);
     setDraftOrderDate(isoDate());
@@ -1268,6 +1277,10 @@ export default function Home() {
       }
       if (event.key === "F2") {
         event.preventDefault();
+        if (currentUser?.role === "md") {
+          notify("Managing Director login is view-only. Use a showroom login for billing.");
+          return;
+        }
         setActive("billing"); setBillingStep(2);
         window.setTimeout(() => searchInputRef.current?.focus(), 80);
         return;
@@ -1275,6 +1288,10 @@ export default function Home() {
       if (typing && !(event.ctrlKey || event.metaKey)) return;
       if (event.altKey && ["1", "2", "3", "4", "5"].includes(event.key)) {
         event.preventDefault();
+        if (event.key === "2" && currentUser?.role === "md") {
+          notify("Managing Director login is view-only. Use a showroom login for billing.");
+          return;
+        }
         setActive((["dashboard", "billing", "products", "bills", "deliveries"] as Page[])[Number(event.key) - 1]);
       } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "h") {
         event.preventDefault();
@@ -2007,7 +2024,7 @@ export default function Home() {
             <button type="button" className={loginMode === "md" ? "active" : ""} onClick={() => { setLoginMode("md"); setLoginForm({ username: "Managing Director", password: "" }); setLoginError(""); }}>MD login</button>
           </div>
           <form onSubmit={submitLogin}>
-            {loginMode === "showroom" ? <label>Choose showroom<select value={loginForm.username} onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value, password: "" })} required><option value="">Select showroom</option><option value="Iyer Bungalow">Iyer Bungalow</option><option value="Bypass">Bypass</option><option value="Highway">Highway</option></select></label> : <label>MD username<input value={loginForm.username} readOnly autoComplete="username" required /></label>}
+            {loginMode === "showroom" ? <label>Username<input value={loginForm.username} onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value })} autoComplete="username" placeholder="Enter showroom username" required /></label> : <label>MD username<input value={loginForm.username} readOnly autoComplete="username" required /></label>}
             <label>Password<input type="password" value={loginForm.password} onChange={(event) => setLoginForm({ ...loginForm, password: event.target.value })} autoComplete="current-password" required /></label>
             {loginError && <div className="login-error" role="alert">{loginError}</div>}
             <button className="primary-action" disabled={loginBusy}>{loginBusy ? "Signing in…" : "Open billing desk"}<span>→</span></button>
@@ -2038,12 +2055,12 @@ export default function Home() {
             icon="⌂"
             label="Dashboard"
           />
-          <Nav
+          {currentUser?.role !== "md" && <Nav
             active={active === "billing"}
             onClick={startNewOrder}
             icon="₹"
             label="New order"
-          />
+          />}
           <Nav
             active={active === "products"}
             onClick={() => setActive("products")}
@@ -2117,12 +2134,12 @@ export default function Home() {
             icon="⌂"
             label="Dashboard"
           />
-          <Nav
+          {currentUser?.role !== "md" && <Nav
             active={active === "billing"}
             onClick={startNewOrder}
             icon="₹"
             label="Order"
-          />
+          />}
           <Nav
             active={active === "products"}
             onClick={() => setActive("products")}
@@ -2163,7 +2180,7 @@ export default function Home() {
               </div>
               <div className="heading-actions">
                 <button className="secondary-action" onClick={() => { setTaskCategoryLocked(false); setTaskTemplateKey(""); setTaskForm({ category: "General", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
-                <button className="primary-small" onClick={startNewOrder}>＋ New order</button>
+                {currentUser?.role !== "md" && <button className="primary-small" onClick={startNewOrder}>＋ New order</button>}
               </div>
             </div>
             <div className="today-overview">
@@ -2932,7 +2949,7 @@ export default function Home() {
                 <input
                   value={billSearch}
                   onChange={(event) => setBillSearch(event.target.value)}
-                  placeholder="Order no, customer, phone, staff or counter…"
+                  placeholder="Order no, customer, phone or staff…"
                 />
               </label>
               <button className="text-button" onClick={() => load()}>
@@ -2970,9 +2987,7 @@ export default function Home() {
                             ? `${money(bill.balanceAmount)} due`
                             : "Paid"}
                       </span>
-                      <small>
-                        {bill.counterName || "—"} · {bill.paymentMode}
-                      </small>
+                      <small>{bill.paymentMode}</small>
                     </div>
                     <strong className="bill-total">
                       {money(bill.grandTotal)}
@@ -3963,72 +3978,22 @@ export default function Home() {
                   </button>
                 </div>
               )}
-            <div className="modal-actions invoice-actions">
-              <button
-                className="secondary-action"
-                onClick={() => printBill(selectedBill, "order")}
-              >
-                Print Order Slip
-              </button>
-              <button
-                className="secondary-action"
-                onClick={() => printBill(selectedBill, "invoice")}
-              >
-                Final GST Invoice
-              </button>
-              <button
-                className="secondary-action"
-                onClick={() => downloadBillExcel(selectedBill)}
-              >
-                Excel
-              </button>
-              <button
-                className="secondary-action"
-                onClick={() => shareWhatsApp(selectedBill)}
-              >
-                WhatsApp invoice
-              </button>
+            {selectedBill.status === "cancelled" ? <div className="cancelled-lock-note">This cancelled bill is permanently frozen. Printing, GST invoice, Excel export, WhatsApp sharing, editing and payments are disabled.</div> : <div className="modal-actions invoice-actions">
+              <button className="secondary-action" onClick={() => printBill(selectedBill, "order")}>Print Order Slip</button>
+              <button className="secondary-action" onClick={() => printBill(selectedBill, "invoice")}>Final GST Invoice</button>
+              <button className="secondary-action" onClick={() => downloadBillExcel(selectedBill)}>Excel</button>
+              <button className="secondary-action" onClick={() => shareWhatsApp(selectedBill)}>WhatsApp invoice</button>
               <button className="secondary-action" onClick={() => shareWhatsApp(selectedBill, "delivery")}>WhatsApp delivery</button>
-              {selectedBill.status !== "cancelled" && (
-                <button className="secondary-action" onClick={() => openAssignmentForBill(selectedBill)}>
-                  Assign supplier
-                </button>
-              )}
-              {selectedBill.status !== "cancelled" && currentUser?.role === "md" && (
-                <button
-                  className="secondary-action"
-                  onClick={() => setEditingBill({ ...selectedBill, items: selectedBill.items.map((item) => ({ ...item })) })}
-                >
-                  Edit full order
-                </button>
-              )}
-              {selectedBill.status !== "cancelled" && currentUser?.role === "md" && (
-                <button
-                  className="danger-button"
-                  onClick={async () => {
-                    if (
-                      !window.confirm(
-                        "Cancel this order and restore all ready stock?",
-                      )
-                    )
-                      return;
-                    const data = await mutate(
-                      { action: "cancelBill", id: selectedBill.id },
-                      "Bill cancelled. Stock restored everywhere.",
-                    );
-                    if (data)
-                      setSelectedBill(
-                        data.bills.find(
-                          (bill) => bill.id === selectedBill.id,
-                        ) || null,
-                      );
-                  }}
-                >
-                  Cancel order
-                </button>
-              )}
-              {selectedBill.status !== "cancelled" && currentUser?.role !== "md" && <span className="md-approval-note">Edit / cancel requires Managing Director approval.</span>}
-            </div>
+              {selectedBill.items.length >= 4 && <button className="secondary-action" onClick={() => { setJobCardForm({ stage: "New", referenceImages: [], billId: selectedBill.id, customerName: selectedBill.customerName, phone: selectedBill.customerPhone, measurements: selectedBill.items.map((item) => `${item.name}${item.size ? ` · ${item.size}` : ""}`).join("\n") }); setShowJobCardForm(true); }}>＋ Add to job card</button>}
+              <button className="secondary-action" onClick={() => openAssignmentForBill(selectedBill)}>Assign supplier</button>
+              {currentUser?.role === "md" && <button className="secondary-action" onClick={() => setEditingBill({ ...selectedBill, items: selectedBill.items.map((item) => ({ ...item })) })}>Edit full order</button>}
+              {currentUser?.role === "md" && <button className="danger-button" onClick={async () => {
+                if (!window.confirm("Cancel this order and restore all ready stock?")) return;
+                const data = await mutate({ action: "cancelBill", id: selectedBill.id }, "Bill cancelled. Stock restored everywhere.");
+                if (data) setSelectedBill(data.bills.find((bill) => bill.id === selectedBill.id) || null);
+              }}>Cancel order</button>}
+              {currentUser?.role !== "md" && <span className="md-approval-note">Edit / cancel requires Managing Director approval.</span>}
+            </div>}
           </div>
         </div>
       )}
@@ -4190,17 +4155,17 @@ export default function Home() {
 
       {showTaskForm && (
         <div className="modal-backdrop"><form className="modal-card" onSubmit={saveTask}>
-          <div className="modal-head"><div><span className="eyebrow">Task & schedule</span><h2>{taskForm.title || (taskForm.id ? "Edit task" : "Add task")}</h2><small>Capture the customer, commitment and person responsible before saving.</small></div><button type="button" onClick={() => setShowTaskForm(false)}>×</button></div>
+          <div className="modal-head"><div><span className="eyebrow">Task & schedule</span><h2>{taskForm.title || (taskForm.id ? "Edit task" : "Add task")}</h2><small>{taskTemplateKey === "cleaning" ? "Record the cleaning activity and assign the responsible staff member." : taskTemplateKey === "marketing" ? "Capture the lead or promotion details and the next action." : taskTemplateKey === "development" ? "Record the showroom improvement and owner." : taskTemplateKey === "financial" ? "Capture the payment commitment and responsible staff member." : "Capture the customer, commitment and person responsible before saving."}</small></div><button type="button" onClick={() => setShowTaskForm(false)}>×</button></div>
           <div className="form-grid">
             {!taskCategoryLocked && <label className="wide task-title-field">Task title<input value={taskForm.title || ""} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} required /></label>}
-            <label className="wide assigned-task-field">Assigned to<input list="task-staff" value={taskForm.assignedTo || ""} onChange={(event) => setTaskForm({ ...taskForm, assignedTo: event.target.value })} placeholder="Type or choose the staff member responsible" /><small className="field-hint">This person owns the task. You can filter the list by multiple staff names.</small><datalist id="task-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
+            <label className="wide assigned-task-field">Assigned to<input list="task-staff" value={taskForm.assignedTo || ""} onChange={(event) => setTaskForm({ ...taskForm, assignedTo: event.target.value })} placeholder="Type or choose the staff member responsible" required /><small className="field-hint">This person owns the task. You can filter the list by multiple staff names.</small><datalist id="task-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
             {(!taskCategoryLocked || ["follow-up", "marketing", "financial"].includes(taskTemplateKey)) && <label>Customer name<input value={taskForm.customerName || ""} onChange={(event) => setTaskForm({ ...taskForm, customerName: event.target.value })} /></label>}
             {(!taskCategoryLocked || ["follow-up", "marketing", "financial"].includes(taskTemplateKey)) && <label>Phone number<input value={taskForm.customerPhone || ""} onChange={(event) => setTaskForm({ ...taskForm, customerPhone: event.target.value, linkedCustomerPhone: event.target.value })} /></label>}
             {(!taskCategoryLocked || ["follow-up", "marketing"].includes(taskTemplateKey)) && <label>Enquired products<input value={taskForm.enquiredProducts || ""} onChange={(event) => setTaskForm({ ...taskForm, enquiredProducts: event.target.value })} placeholder="Sofa, cot, dining set…" /></label>}
             {(!taskCategoryLocked || ["follow-up", "cleaning", "marketing", "development"].includes(taskTemplateKey)) && <label>Attended by<input list="attended-staff" value={taskForm.attendedBy || ""} onChange={(event) => setTaskForm({ ...taskForm, attendedBy: event.target.value })} /><datalist id="attended-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>}
             <label>Commitment date<input type="date" value={taskForm.commitmentDate || ""} onChange={(event) => setTaskForm({ ...taskForm, commitmentDate: event.target.value })} /></label>
             {!taskCategoryLocked && <label>Due date<input type="date" value={taskForm.dueDate || ""} onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })} /></label>}
-            <label className="wide customer-notes-field">Customer notes<textarea rows={3} value={taskForm.notes || ""} onChange={(event) => setTaskForm({ ...taskForm, notes: event.target.value })} placeholder="Customer requirement, promised action or follow-up notes…" /></label>
+            <label className="wide customer-notes-field">{taskTemplateKey === "cleaning" ? "Cleaning notes" : taskTemplateKey === "development" ? "Development notes" : taskTemplateKey === "financial" ? "Payment notes" : "Customer notes"}<textarea rows={3} value={taskForm.notes || ""} onChange={(event) => setTaskForm({ ...taskForm, notes: event.target.value })} placeholder={taskTemplateKey === "cleaning" ? "Record the cleaning work, issue or materials needed…" : taskTemplateKey === "development" ? "Record the improvement, decision or next action…" : taskTemplateKey === "financial" ? "Record the commitment, amount or payment plan…" : "Customer requirement, promised action or follow-up notes…"} /></label>
             {!taskCategoryLocked && <label>Category<select value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Development", "Recruitment", "Financial Commitment", "Financial", "Delivery", "Complaint", "General"].map((item) => <option key={item}>{item}</option>)}</select></label>}
             <label>Priority<select value={taskForm.priority || "Normal"} onChange={(event) => setTaskForm({ ...taskForm, priority: event.target.value })}><option>Low</option><option>Normal</option><option>High</option><option>Urgent</option></select></label>
             {!taskCategoryLocked && <label className="wide">Details<textarea rows={3} value={taskForm.details || ""} onChange={(event) => setTaskForm({ ...taskForm, details: event.target.value })} /></label>}
@@ -4491,7 +4456,6 @@ function buildReport(
         "Paid",
         "Balance",
         "Staff",
-        "Counter",
       ],
       rows: list.map((bill) => [
         bill.billNo,
@@ -4500,7 +4464,6 @@ function buildReport(
         bill.paidAmount,
         bill.balanceAmount,
         bill.staffName,
-        bill.counterName,
       ]),
     };
   }
@@ -4735,7 +4698,6 @@ function buildReport(
       ],
       headers: [
         "Staff",
-        "Counters Used",
         "Orders",
         "Products",
         "Sales",
@@ -4747,7 +4709,6 @@ function buildReport(
       ],
       rows: rows.map((row) => [
         row.staff,
-        [...row.counters].join(", "),
         row.orders,
         row.items,
         row.sales,
@@ -4927,7 +4888,6 @@ function buildReport(
       "Customer",
       "Phone",
       "Staff",
-      "Counter",
       "Product Total",
       "Against Extra",
       "Discount",
@@ -4945,7 +4905,6 @@ function buildReport(
       bill.customerName,
       bill.customerPhone,
       bill.staffName,
-      bill.counterName,
       bill.productTotal,
       bill.againstOrderExtra,
       bill.discount,
