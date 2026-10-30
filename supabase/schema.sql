@@ -4,6 +4,7 @@
 create table if not exists public.products (
   id text primary key,
   code text not null unique,
+  client_key text not null default 'SHF',
   hsn_code text not null default '',
   name text not null,
   category text not null default 'Others',
@@ -16,6 +17,8 @@ create table if not exists public.products (
   image_key text not null default '',
   updated_at timestamptz not null default now()
 );
+
+alter table public.products add column if not exists client_key text not null default 'SHF';
 
 create table if not exists public.bills (
   id text primary key,

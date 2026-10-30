@@ -281,6 +281,11 @@ const categories = [
   "Others",
   "Custom Made",
 ];
+const productCategoryOptions = [
+  "Cot", "Mattress", "Sofa", "Suite Chair", "Lounge", "Office Chair", "Office Table",
+  "Dining Table", "Dining Chairs", "Dining Set", "Wardrobe", "TV Console", "Gift Articles",
+  "Wall hangings", "Pillows", "Utilities & Accessories", "Miscellaneous", "Custom Made",
+];
 const paymentModes = ["CASH", "GPAY", "CARD", "RTGS", "BAJAJ", "CHEQUE"];
 const deliveryStages = ["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"];
 const taskTemplates = [
@@ -3758,8 +3763,7 @@ export default function Home() {
               </label>
               <label>
                 Category
-                <input
-                  list="category-options"
+                <select
                   value={productForm.category}
                   onChange={(event) =>
                     setProductForm({
@@ -3767,12 +3771,10 @@ export default function Home() {
                       category: event.target.value,
                     })
                   }
-                />
-                <datalist id="category-options">
-                  {categories.slice(1).map((item) => (
-                    <option value={item} key={item} />
-                  ))}
-                </datalist>
+                >
+                  <option value="">Select category</option>
+                  {productCategoryOptions.map((item) => <option value={item} key={item}>{item}</option>)}
+                </select>
               </label>
               <label>
                 Size

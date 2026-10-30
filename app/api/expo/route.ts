@@ -4,7 +4,7 @@ import { getSessionUser, isAuthenticated, unauthorized, type AppUser } from "../
 type ProductInput = {
   id?: string; code?: string; hsnCode?: string; name?: string; category?: string;
   size?: string; woodType?: string; price?: number; stockQty?: number; mrp?: number;
-  notes?: string; imageKey?: string;
+  notes?: string; imageKey?: string; clientKey?: string;
 };
 
 type BillItemInput = {
@@ -106,6 +106,7 @@ async function ensureSchema() {
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_leads_follow_up ON leads(follow_up_date)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
+    db.prepare("ALTER TABLE products ADD COLUMN IF NOT EXISTS client_key TEXT NOT NULL DEFAULT 'SHF'"),
     db.prepare("ALTER TABLE bills ADD COLUMN IF NOT EXISTS client_key TEXT NOT NULL DEFAULT 'SHF'"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_name TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_phone TEXT NOT NULL DEFAULT ''"),
@@ -126,7 +127,7 @@ async function ensureSchema() {
   }
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS products (
-      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, hsn_code TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, client_key TEXT NOT NULL DEFAULT 'SHF', hsn_code TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT 'Others', size TEXT NOT NULL DEFAULT '', wood_type TEXT NOT NULL DEFAULT '',
       price REAL NOT NULL DEFAULT 0, stock_qty INTEGER NOT NULL DEFAULT 0, mrp REAL NOT NULL DEFAULT 0,
       notes TEXT NOT NULL DEFAULT '', image_key TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -206,7 +207,7 @@ async function ensureSchema() {
   ]);
 
   const additions: Array<["products" | "bills" | "settings" | "tasks", string, string]> = [
-    ["products", "image_key", "TEXT NOT NULL DEFAULT ''"],
+    ["products", "image_key", "TEXT NOT NULL DEFAULT ''"], ["products", "client_key", "TEXT NOT NULL DEFAULT 'SHF'"],
     ["bills", "client_request_id", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "client_key", "TEXT NOT NULL DEFAULT 'SHF'"],
     ["bills", "staff_name", "TEXT NOT NULL DEFAULT ''"], ["bills", "counter_name", "TEXT NOT NULL DEFAULT ''"],
@@ -266,21 +267,22 @@ async function ensureSchema() {
 function productUpsertStatement(input: ProductInput) {
   const code = clean(input.code).toUpperCase();
   const id = clean(input.id) || `prd-${code.toLowerCase().replace(/[^a-z0-9]+/g, "-") || crypto.randomUUID()}`;
+  const clientKey = clean(input.clientKey, "SHF").toUpperCase();
   return env.DB.prepare(`INSERT INTO products
-    (id,code,hsn_code,name,category,size,wood_type,price,stock_qty,mrp,notes,image_key,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+    (id,code,client_key,hsn_code,name,category,size,wood_type,price,stock_qty,mrp,notes,image_key,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
     ON CONFLICT(code) DO UPDATE SET hsn_code=excluded.hsn_code,name=excluded.name,category=excluded.category,
-    size=excluded.size,wood_type=excluded.wood_type,price=excluded.price,stock_qty=excluded.stock_qty,
+    client_key=excluded.client_key,size=excluded.size,wood_type=excluded.wood_type,price=excluded.price,stock_qty=excluded.stock_qty,
     mrp=excluded.mrp,notes=excluded.notes,image_key=CASE WHEN excluded.image_key<>'' THEN excluded.image_key ELSE products.image_key END,
     updated_at=CURRENT_TIMESTAMP`)
-    .bind(id, code, clean(input.hsnCode), clean(input.name), clean(input.category, "Others") || "Others", clean(input.size),
+    .bind(id, code, clientKey, clean(input.hsnCode), clean(input.name), clean(input.category, "Others") || "Others", clean(input.size),
       clean(input.woodType), round2(numeric(input.price)), whole(input.stockQty), round2(numeric(input.mrp)), clean(input.notes), clean(input.imageKey));
 }
 
 async function readState(scopeKey = "all") {
   const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows, leadRows, jobRows, heldRows, verificationRows, commitmentRows, expenseRows, financeControlRow] = await Promise.all([
-    env.DB.prepare(`SELECT id,code,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
-      stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ORDER BY category,name`).all(),
+    env.DB.prepare(`SELECT id,code,client_key AS clientKey,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
+      stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ${scopeKey === "all" ? "" : "WHERE client_key=?"} ORDER BY category,name`).bind(...(scopeKey === "all" ? [] : [scopeKey])).all(),
     env.DB.prepare(`SELECT id,bill_no AS billNo,customer_name AS customerName,customer_phone AS customerPhone,
       customer_address AS customerAddress,items_json AS itemsJson,staff_name AS staffName,counter_name AS counterName,
       product_total AS productTotal,against_order_extra AS againstOrderExtra,card_charge AS cardCharge,
@@ -512,14 +514,14 @@ export async function POST(request: Request) {
     } else if (action === "deleteExpense") {
       await env.DB.prepare("DELETE FROM finance_expenses WHERE id=?").bind(clean(payload.id)).run();
     } else if (action === "saveProduct") {
-      const product = payload.product as ProductInput;
+      const product = { ...(payload.product as ProductInput), clientKey: user.role === "client" ? user.clientKey : clean((payload.product as ProductInput)?.clientKey, "SHF") };
       if (!clean(product?.code) || !clean(product?.name) || numeric(product?.price) <= 0) {
         return Response.json({ error: "Product code, name and showroom price are required." }, { status: 400 });
       }
       await productUpsertStatement(product).run();
     } else if (action === "importProducts") {
       const rows = Array.isArray(payload.products) ? payload.products as ProductInput[] : [];
-      const valid = rows.filter((product) => clean(product.code) && clean(product.name) && numeric(product.price) > 0).slice(0, 1500);
+      const valid = rows.filter((product) => clean(product.code) && clean(product.name) && numeric(product.price) > 0).map((product) => ({ ...product, clientKey: user.role === "client" ? user.clientKey : clean(product.clientKey, "SHF") })).slice(0, 1500);
       if (!valid.length) return Response.json({ error: "No valid products found in this file." }, { status: 400 });
       const codes = new Set<string>();
       for (const product of valid) {
@@ -530,15 +532,19 @@ export async function POST(request: Request) {
       for (let i = 0; i < valid.length; i += 75) await env.DB.batch(valid.slice(i, i + 75).map(productUpsertStatement));
     } else if (action === "deleteProduct") {
       const id = clean(payload.id);
-      const row = await env.DB.prepare("SELECT image_key AS imageKey FROM products WHERE id=?").bind(id).first<{ imageKey: string }>();
-      await env.DB.prepare("DELETE FROM products WHERE id=?").bind(id).run();
+      const scope = user.role === "client" ? " AND client_key=?" : "";
+      const params = user.role === "client" ? [id, user.clientKey] : [id];
+      const row = await env.DB.prepare(`SELECT image_key AS imageKey FROM products WHERE id=?${scope}`).bind(...params).first<{ imageKey: string }>();
+      await env.DB.prepare(`DELETE FROM products WHERE id=?${scope}`).bind(...params).run();
       if (row?.imageKey) await env.FILES.delete(row.imageKey);
     } else if (action === "adjustStock") {
       const id = clean(payload.id);
       const parsedDelta = Number(payload.delta);
       const delta = Number.isFinite(parsedDelta) ? Math.trunc(parsedDelta) : 0;
       if (!id || delta === 0) return Response.json({ error: "Choose a product and stock quantity." }, { status: 400 });
-      const result = await env.DB.prepare("UPDATE products SET stock_qty=MAX(0,stock_qty+?),updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(delta, id).run();
+      const scope = user.role === "client" ? " AND client_key=?" : "";
+      const params = user.role === "client" ? [delta, id, user.clientKey] : [delta, id];
+      const result = await env.DB.prepare(`UPDATE products SET stock_qty=MAX(0,stock_qty+?),updated_at=CURRENT_TIMESTAMP WHERE id=?${scope}`).bind(...params).run();
       if (!result.meta.changes) return Response.json({ error: "Product was not found." }, { status: 404 });
     } else if (action === "createBill") {
       if (user.role === "md") return Response.json({ error: "Managing Director login is view-only. Use a showroom login to create a new order." }, { status: 403 });
