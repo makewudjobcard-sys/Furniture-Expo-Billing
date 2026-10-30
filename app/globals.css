@@ -28,6 +28,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .brand-mark div { display: grid; gap: 2px; min-width: 0; }
 .brand-mark strong { font-family: Georgia, serif; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-mark small { color: #bea99a; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.role-badge { display: grid; gap: 2px; margin-top: 14px; padding: 9px 11px; border: 1px solid rgba(255,255,255,.12); border-radius: 10px; background: rgba(255,255,255,.06); }
+.role-badge strong { color: #fff5e9; font-size: 11px; }
+.role-badge small { color: #c3b2a5; font-size: 9px; line-height: 1.35; }
 .sidebar nav { margin-top: 30px; display: grid; gap: 5px; overflow-y: auto; scrollbar-width: none; }
 .sidebar nav button, .mobile-tabs button { border: 0; background: transparent; display: flex; align-items: center; gap: 13px; cursor: pointer; border-radius: 11px; }
 .sidebar nav button { padding: 10px 13px; color: #c7b7aa; text-align: left; }
@@ -45,6 +48,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .main-content { margin-left: 238px; min-height: 100vh; }
 .mobile-header, .mobile-tabs { display: none; }
+.mobile-role-badge { margin-left: auto; padding: 6px 9px; border-radius: 99px; background: var(--paper); color: var(--success); font-size: 10px; font-weight: 800; }
 .billing-layout { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) 390px; }
 .catalog-panel { padding: 34px 34px 52px; min-width: 0; }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 25px; }
@@ -59,6 +63,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .search-box > span { font-size: 23px; color: var(--muted); transform: rotate(-15deg); }
 .search-box input { border: 0; outline: 0; background: transparent; flex: 1; min-width: 0; color: var(--ink); }
 .search-box input::placeholder { color: #9e9187; }
+.billing-quick-actions { display: flex; gap: 8px; }
+.custom-item-button { min-height: 42px; padding: 0 12px; border: 1px solid #b8d6c5; border-radius: 10px; background: #eff8f1; color: var(--success); font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.md-approval-note { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 11px; border: 1px solid #e7c994; border-radius: 10px; background: #fff7e7; color: #8a5b1c; font-size: 10px; font-weight: 750; }
 .search-box kbd { border: 1px solid var(--line); padding: 3px 7px; border-radius: 6px; color: #8b7a6e; background: #f9f5ef; font-size: 10px; }
 .category-row { display: flex; overflow-x: auto; gap: 7px; padding: 14px 0 18px; scrollbar-width: none; }
 .category-row::-webkit-scrollbar { display: none; }

@@ -1,5 +1,6 @@
-import { authConfigured, isAuthenticated } from "../../../lib/auth";
+import { authConfigured, getSessionUser } from "../../../lib/auth";
 
 export async function GET(request: Request) {
-  return Response.json({ authenticated: await isAuthenticated(request), configured: authConfigured() }, { headers: { "Cache-Control": "no-store" } });
+  const user = await getSessionUser(request);
+  return Response.json({ authenticated: Boolean(user), configured: authConfigured(), user: user ? { username: user.username, role: user.role, clientKey: user.clientKey, label: user.label } : null }, { headers: { "Cache-Control": "no-store" } });
 }

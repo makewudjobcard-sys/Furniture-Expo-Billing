@@ -21,6 +21,7 @@ create table if not exists public.bills (
   id text primary key,
   bill_no text not null unique,
   client_request_id text not null default '',
+  client_key text not null default 'SHF',
   customer_name text not null,
   customer_phone text not null,
   customer_address text not null default '',
@@ -55,6 +56,8 @@ create table if not exists public.bills (
   status text not null default 'confirmed',
   created_at timestamptz not null default now()
 );
+
+alter table public.bills add column if not exists client_key text not null default 'SHF';
 
 create table if not exists public.settings (
   id integer primary key check (id = 1),

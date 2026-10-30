@@ -1,5 +1,5 @@
 import { env } from "../../lib/runtime";
-import { isAuthenticated, unauthorized } from "../../lib/auth";
+import { getSessionUser, isAuthenticated, unauthorized, type AppUser } from "../../lib/auth";
 
 type ProductInput = {
   id?: string; code?: string; hsnCode?: string; name?: string; category?: string;
@@ -88,6 +88,7 @@ async function ensureSchema() {
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_leads_follow_up ON leads(follow_up_date)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
+    db.prepare("ALTER TABLE bills ADD COLUMN IF NOT EXISTS client_key TEXT NOT NULL DEFAULT 'SHF'"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_name TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_phone TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS enquired_products TEXT NOT NULL DEFAULT ''"),
@@ -173,6 +174,7 @@ async function ensureSchema() {
   const additions: Array<["products" | "bills" | "settings" | "tasks", string, string]> = [
     ["products", "image_key", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "client_request_id", "TEXT NOT NULL DEFAULT ''"],
+    ["bills", "client_key", "TEXT NOT NULL DEFAULT 'SHF'"],
     ["bills", "staff_name", "TEXT NOT NULL DEFAULT ''"], ["bills", "counter_name", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "product_total", "REAL NOT NULL DEFAULT 0"], ["bills", "against_order_extra", "REAL NOT NULL DEFAULT 0"],
     ["bills", "card_charge", "REAL NOT NULL DEFAULT 0"], ["bills", "transport_charge", "REAL NOT NULL DEFAULT 0"],
@@ -240,7 +242,7 @@ function productUpsertStatement(input: ProductInput) {
       clean(input.woodType), round2(numeric(input.price)), whole(input.stockQty), round2(numeric(input.mrp)), clean(input.notes), clean(input.imageKey));
 }
 
-async function readState() {
+async function readState(scopeKey = "all") {
   const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows, leadRows, jobRows, heldRows, verificationRows] = await Promise.all([
     env.DB.prepare(`SELECT id,code,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
       stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ORDER BY category,name`).all(),
@@ -252,8 +254,8 @@ async function readState() {
       paid_amount AS paidAmount,balance_amount AS balanceAmount,payment_mode AS paymentMode,
       payment_history_json AS paymentHistoryJson,client_request_id AS clientRequestId,delivery_date AS deliveryDate,delivery_status AS deliveryStatus,
       delivered_at AS deliveredAt,order_notes AS orderNotes,accountant_name AS accountantName,
-      manager_name AS managerName,document_type AS documentType,status,created_at AS createdAt
-      FROM bills ORDER BY created_at DESC LIMIT 1000`).all(),
+      manager_name AS managerName,document_type AS documentType,client_key AS clientKey,status,created_at AS createdAt
+      FROM bills ${scopeKey === "all" ? "" : "WHERE client_key=?"} ORDER BY created_at DESC LIMIT 1000`).bind(...(scopeKey === "all" ? [] : [scopeKey])).all(),
     env.DB.prepare(`SELECT business_name AS businessName,subtitle,gstin,phone,address,gst_rate AS gstRate,
       bill_prefix AS billPrefix,staff_names_json AS staffNamesJson,counter_names_json AS counterNamesJson,
       default_counter AS defaultCounter,invoice_terms AS invoiceTerms,updated_at AS updatedAt FROM settings WHERE id=1`).first(),
@@ -373,17 +375,25 @@ function auditDescription(action: string, payload: Record<string, unknown>) {
 }
 
 export async function GET(request: Request) {
-  if (!await isAuthenticated(request)) return unauthorized();
-  try { await ensureSchema(); return Response.json(await readState(), { headers: { "Cache-Control": "no-store" } }); }
+  const user = await getSessionUser(request);
+  if (!user || !await isAuthenticated(request)) return unauthorized();
+  try { await ensureSchema(); return Response.json(await readState(user.role === "md" ? "all" : user.clientKey), { headers: { "Cache-Control": "no-store" } }); }
   catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Unable to load expo data" }, { status: 500 }); }
 }
 
 export async function POST(request: Request) {
-  if (!await isAuthenticated(request)) return unauthorized();
+  const user = await getSessionUser(request);
+  if (!user || !await isAuthenticated(request)) return unauthorized();
   try {
     await ensureSchema();
     const payload = await request.json() as Record<string, unknown>;
     const action = clean(payload.action);
+    if (["updateBillDetails", "removeBillItem", "cancelBill"].includes(action) && user.role !== "md") {
+      return Response.json({ error: "MD approval required. Ask Managing Director to sign in and approve this bill change." }, { status: 403 });
+    }
+    if (["resetDemoWorkspace", "saveSettings"].includes(action) && user.role !== "md") {
+      return Response.json({ error: "Only Managing Director can change showroom-wide settings." }, { status: 403 });
+    }
 
     if (action === "resetDemoWorkspace") {
       const runtime = env as typeof env & { APP_SESSION_SECRET?: string };
@@ -433,7 +443,7 @@ export async function POST(request: Request) {
       const bill = payload.bill as Record<string, unknown>;
       const clientRequestId = clean(bill?.clientRequestId) || crypto.randomUUID();
       const existing = await env.DB.prepare("SELECT id FROM bills WHERE client_request_id=?").bind(clientRequestId).first();
-      if (existing) return Response.json(await readState(), { headers: { "Cache-Control": "no-store" } });
+      if (existing) return Response.json(await readState(user.role === "md" ? "all" : user.clientKey), { headers: { "Cache-Control": "no-store" } });
       const customerName = clean(bill?.customerName);
       const customerPhone = clean(bill?.customerPhone);
       if (!customerName || !customerPhone) return Response.json({ error: "Customer name and phone number are required." }, { status: 400 });
@@ -475,24 +485,27 @@ export async function POST(request: Request) {
       // UPDATE ... RETURNING statement cannot be used inside that wrapper and
       // fails in Postgres with `syntax error at or near "SET"`. Keep the
       // counter write on the exec RPC, then read its value with a real SELECT.
-      await env.DB.prepare("UPDATE counters SET value=value+1 WHERE key='bill'").run();
-      const counter = await env.DB.prepare("SELECT value FROM counters WHERE key='bill'").first<{ value: number }>();
-      const billNo = `${clean(setting?.billPrefix, "EXP").toUpperCase()}-${String(counter?.value || Date.now()).padStart(4, "0")}`;
+      const billPrefix = user.role === "client" ? user.clientKey.toUpperCase() : clean(setting?.billPrefix, "SHF").toUpperCase();
+      const counterKey = `bill_${billPrefix}`;
+      await env.DB.prepare("INSERT OR IGNORE INTO counters (key,value) VALUES (?,0)").bind(counterKey).run();
+      await env.DB.prepare("UPDATE counters SET value=value+1 WHERE key=?").bind(counterKey).run();
+      const counter = await env.DB.prepare("SELECT value FROM counters WHERE key=?").bind(counterKey).first<{ value: number }>();
+      const billNo = `${billPrefix}-${String(counter?.value || Date.now()).padStart(2, "0")}`;
       const billId = uid("bill");
-      const columns = `id,bill_no,client_request_id,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
+      const columns = `id,bill_no,client_request_id,client_key,customer_name,customer_phone,customer_address,items_json,staff_name,counter_name,
         product_total,against_order_extra,card_charge,transport_charge,other_charge,subtotal,discount_type,discount_value,
         discount,taxable_value,cgst,sgst,gst,grand_total,paid_amount,balance_amount,payment_mode,payment_history_json,
         delivery_date,delivery_status,order_notes,accountant_name,manager_name,document_type,status`;
       const inserted = await env.DB.prepare(`INSERT INTO bills (${columns})
-        SELECT ${Array.from({ length: 34 }, () => "?").join(",")}
+        SELECT ${Array.from({ length: 35 }, () => "?").join(",")}
         WHERE NOT EXISTS (SELECT 1 FROM bills WHERE client_request_id=?)`)
-        .bind(billId, billNo, clientRequestId, customerName, customerPhone, clean(bill.customerAddress), JSON.stringify(items),
+        .bind(billId, billNo, clientRequestId, user.role === "client" ? user.clientKey : "SHF", customerName, customerPhone, clean(bill.customerAddress), JSON.stringify(items),
           clean(bill.staffName), clean(bill.counterName, setting?.defaultCounter || "Counter 1"), productTotal,
           againstOrderExtra, cardCharge, transportCharge, otherCharge, subtotal, discountType, round2(discountValue),
           discount, taxableValue, cgst, sgst, gst, grandTotal, paidAmount, balanceAmount, paymentMode, JSON.stringify(history),
           clean(bill.deliveryDate), "Order Booked", clean(bill.orderNotes), clean(bill.accountantName), clean(bill.managerName),
           "order_slip", "confirmed", clientRequestId).run();
-      if (!inserted.meta.changes) return Response.json(await readState(), { headers: { "Cache-Control": "no-store" } });
+      if (!inserted.meta.changes) return Response.json(await readState(user.role === "md" ? "all" : user.clientKey), { headers: { "Cache-Control": "no-store" } });
       const deliveryDate = clean(bill.deliveryDate);
       const followUpDate = new Date(now.getTime() + 86400000).toISOString().slice(0, 10);
       const followUpStatements = [
@@ -940,7 +953,7 @@ export async function POST(request: Request) {
         console.error("Primary action saved but audit logging failed", auditError);
       }
     }
-    return Response.json(await readState());
+    return Response.json(await readState(user.role === "md" ? "all" : user.clientKey));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save showroom data";
     return Response.json({ error: message.includes("INSUFFICIENT_STOCK") ? "Stock changed at another counter. Refresh and try again." : message }, { status: 409 });
