@@ -406,7 +406,7 @@ export async function POST(request: Request) {
         env.DB.prepare("DELETE FROM held_orders WHERE 1=1"),
         env.DB.prepare("UPDATE bills SET status='cancelled' WHERE status<>'cancelled'"),
         env.DB.prepare("DELETE FROM bills WHERE 1=1"),
-        env.DB.prepare("DELETE FROM counters WHERE key LIKE 'bill_%'"),
+        env.DB.prepare("DELETE FROM counters WHERE 1=1"),
       ]);
       return Response.json(await readState("all"), { headers: { "Cache-Control": "no-store" } });
     }
