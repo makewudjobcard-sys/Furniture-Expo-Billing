@@ -553,6 +553,8 @@ export default function Home() {
   const scanVideoRef = useRef<HTMLVideoElement>(null);
   const scanControlsRef = useRef<{ stop: () => void } | null>(null);
   const billRequestIdRef = useRef("");
+  const syncInFlightRef = useRef(false);
+  const mutationInFlightRef = useRef(false);
   const taskSaveLockRef = useRef(false);
   const draftLoadedRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -665,9 +667,13 @@ export default function Home() {
 
   const load = useCallback(
     async (silent = false) => {
+      if (syncInFlightRef.current || mutationInFlightRef.current) return;
+      syncInFlightRef.current = true;
       if (!silent) setBusy(true);
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 25000);
       try {
-        const response = await fetch("/api/expo", { cache: "no-store" });
+        const response = await fetch("/api/expo", { cache: "no-store", signal: controller.signal });
         const data = (await response.json()) as ExpoState & { error?: string };
         if (response.status === 401) setAuthStatus("logged_out");
         if (!response.ok)
@@ -702,6 +708,8 @@ export default function Home() {
         if (!silent)
           notify(error instanceof Error ? error.message : "Unable to connect");
       } finally {
+        window.clearTimeout(timeout);
+        syncInFlightRef.current = false;
         if (!silent) setBusy(false);
       }
     },
@@ -767,12 +775,17 @@ export default function Home() {
   }, [authStatus, cart, customer, billingStep, discountType, discountValue, paidAmount, paymentMode, cardCharge, transportCharge, otherCharge]);
 
   async function mutate(payload: Record<string, unknown>, success: string, persistError = false) {
+    if (mutationInFlightRef.current) return null;
+    mutationInFlightRef.current = true;
     setBusy(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30000);
     try {
       const response = await fetch("/api/expo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
       const responseText = await response.text();
       let data: ExpoState & { error?: string };
@@ -799,6 +812,8 @@ export default function Home() {
       notify(message);
       return null;
     } finally {
+      window.clearTimeout(timeout);
+      mutationInFlightRef.current = false;
       setBusy(false);
     }
   }
