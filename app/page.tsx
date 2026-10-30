@@ -1176,6 +1176,7 @@ export default function Home() {
 
   function startNewOrder() {
     clearBillingDraft();
+    setSavedBillForJobCard(null);
     setDraftOrderDate(isoDate());
     setDraftBillNo(nextBillNumber);
     setActive("billing");
@@ -2326,7 +2327,7 @@ export default function Home() {
           <section className={`billing-layout wizard-step-${billingStep}`}>
             <div className="billing-progress" aria-label="Billing progress">
               {([1, 2, 3] as const).map((step) => <button key={step} className={billingStep === step ? "active" : billingStep > step ? "done" : ""} onClick={() => { if (step < billingStep) { setMobileSummaryOpen(false); setBillingStep(step); } }} disabled={step > billingStep}>
-                <span>{billingStep > step ? "✓" : step}</span><div><strong>{step === 1 ? "Customer" : step === 2 ? "Products" : "Payment"}</strong><small>{step === 1 ? "Name & delivery" : step === 2 ? "Choose items" : "Review & save"}</small></div>
+                <span>{billingStep > step ? "✓" : step}</span><div><strong>{step === 1 ? "Customer" : step === 2 ? "Products" : "Payment"}</strong><small>{step === 1 ? "Name & address" : step === 2 ? "Choose items" : "Review & save"}</small></div>
               </button>)}
               <div className="billing-progress-summary">
                 <p><b className="draft-bill-number">{draftBillNo}</b><span className="draft-date">{new Date(draftOrderDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span><br />{cart.reduce((sum, item) => sum + item.qty, 0)} items · {money(grandTotal)} <em>{online ? "Draft auto-saved" : "Offline draft safe"}</em></p>
