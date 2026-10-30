@@ -19,6 +19,12 @@ create table if not exists public.products (
 );
 
 alter table public.products add column if not exists client_key text not null default 'SHF';
+alter table public.products add column if not exists cost_segment text not null default '';
+alter table public.products add column if not exists comfort_tag text not null default '';
+alter table public.products add column if not exists material_tag text not null default '';
+alter table public.products add column if not exists look_tag text not null default '';
+alter table public.products add column if not exists utility_tag text not null default '';
+alter table public.products add column if not exists trend_tag text not null default '';
 
 create table if not exists public.bills (
   id text primary key,

@@ -39,6 +39,12 @@ type Product = {
   notes: string;
   imageKey: string;
   imageUrl: string;
+  costSegment: string;
+  comfortTag: string;
+  materialTag: string;
+  lookTag: string;
+  utilityTag: string;
+  trendTag: string;
 };
 type CartItem = Product & {
   qty: number;
@@ -247,6 +253,12 @@ const EMPTY_PRODUCT = {
   notes: "",
   imageKey: "",
   imageUrl: "",
+  costSegment: "",
+  comfortTag: "",
+  materialTag: "",
+  lookTag: "",
+  utilityTag: "",
+  trendTag: "",
 };
 const DEFAULT_SETTINGS: ExpoSettings = {
   businessName: "Smaarthome Furniture",
@@ -286,6 +298,14 @@ const productCategoryOptions = [
   "Dining Table", "Dining Chairs", "Dining Set", "Wardrobe", "TV Console", "Gift Articles",
   "Wall hangings", "Pillows", "Utilities & Accessories", "Miscellaneous", "Custom Made",
 ];
+const productTagOptions = {
+  costSegment: ["Economy / Budget", "Mid-Segment", "Premium", "Luxury", "Max Value"],
+  comfortTag: ["Ortho-Supported", "Lounging / Relaxed", "Attentive / Office", "Residential Comfort", "Long-Stay Comfort"],
+  materialTag: ["Teak", "Pine", "Rubberwood", "Plywood", "MDF", "Engineered Wood"],
+  lookTag: ["Traditional", "Modern", "Sleek", "Contemporary", "Futuristic"],
+  utilityTag: ["Compact / Space Saving", "Convertible", "Reclining", "Concealed Storage", "Sofa Cum Bed"],
+  trendTag: ["New Arrival", "Clearance", "Hot Pick", "Made to Order"],
+};
 const paymentModes = ["CASH", "GPAY", "CARD", "RTGS", "BAJAJ", "CHEQUE"];
 const deliveryStages = ["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"];
 const taskTemplates = [
@@ -1993,7 +2013,7 @@ export default function Home() {
     }
     const code = `CUSTOM-${Date.now().toString(36).toUpperCase()}`;
     const custom: CartItem = {
-      id: `custom-${crypto.randomUUID()}`, code, hsnCode: "", name, category: "Custom Made", size: customProductForm.size.trim(), woodType: customProductForm.woodType.trim(), price: Math.max(0, customProductForm.price), stockQty: 0, mrp: customProductForm.price, notes: customProductForm.details.trim(), imageKey: uploadedImage.key, imageUrl: uploadedImage.url, qty: Math.max(1, Math.floor(customProductForm.qty || 1)), againstOrder: true, againstOrderExtra: 0, customizeDetails: customProductForm.details.trim(),
+      id: `custom-${crypto.randomUUID()}`, code, hsnCode: "", name, category: "Custom Made", size: customProductForm.size.trim(), woodType: customProductForm.woodType.trim(), price: Math.max(0, customProductForm.price), stockQty: 0, mrp: customProductForm.price, notes: customProductForm.details.trim(), imageKey: uploadedImage.key, imageUrl: uploadedImage.url, costSegment: "", comfortTag: "", materialTag: "", lookTag: "", utilityTag: "", trendTag: "", qty: Math.max(1, Math.floor(customProductForm.qty || 1)), againstOrder: true, againstOrderExtra: 0, customizeDetails: customProductForm.details.trim(),
     };
     setCart((items) => [...items, custom]);
     setCustomProductForm({ name: "", size: "", woodType: "", price: 0, qty: 1, details: "" });
@@ -2940,6 +2960,7 @@ export default function Home() {
                         {[product.size, product.woodType]
                           .filter(Boolean)
                           .join(" · ") || "—"}
+                        {(product.costSegment || product.comfortTag || product.materialTag || product.lookTag || product.utilityTag || product.trendTag) && <div className="product-tag-list">{[product.costSegment, product.comfortTag, product.materialTag, product.lookTag, product.utilityTag, product.trendTag].filter(Boolean).map((tag) => <span className="soft-tag" key={tag}>{tag}</span>)}</div>}
                       </td>
                       <td>
                         <strong>{money(product.price)}</strong>
@@ -3791,6 +3812,13 @@ export default function Home() {
                   {productCategoryOptions.map((item) => <option value={item} key={item}>{item}</option>)}
                 </select>
               </label>
+              <div className="wide inventory-tags-heading"><strong>Product tags</strong><small>Use these tags to help staff find the right product quickly.</small></div>
+              <label>Cost segment<select value={productForm.costSegment} onChange={(event) => setProductForm({ ...productForm, costSegment: event.target.value })}><option value="">Select cost segment</option>{productTagOptions.costSegment.map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label>Comfort<select value={productForm.comfortTag} onChange={(event) => setProductForm({ ...productForm, comfortTag: event.target.value })}><option value="">Select comfort</option>{productTagOptions.comfortTag.map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label>Material type<select value={productForm.materialTag} onChange={(event) => setProductForm({ ...productForm, materialTag: event.target.value })}><option value="">Select material</option>{productTagOptions.materialTag.map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label>Looks<select value={productForm.lookTag} onChange={(event) => setProductForm({ ...productForm, lookTag: event.target.value })}><option value="">Select look</option>{productTagOptions.lookTag.map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label>Utility<select value={productForm.utilityTag} onChange={(event) => setProductForm({ ...productForm, utilityTag: event.target.value })}><option value="">Select utility</option>{productTagOptions.utilityTag.map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label>Trend relevance<select value={productForm.trendTag} onChange={(event) => setProductForm({ ...productForm, trendTag: event.target.value })}><option value="">Select trend</option>{productTagOptions.trendTag.map((item) => <option key={item}>{item}</option>)}</select></label>
               <label>
                 Size
                 <input

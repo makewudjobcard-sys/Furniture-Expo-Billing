@@ -1362,6 +1362,10 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 .finance-control-card { margin:0; }
 .finance-actions { display:flex; gap:10px; flex-wrap:wrap; }
 .finance-note { display:flex; gap:10px; align-items:flex-start; padding:15px 17px; border:1px solid #cce1d6; border-radius:14px; background:#f1faf5; color:#48695a; font-size:12px; line-height:1.5; }
+.inventory-tags-heading { display:grid; gap:3px; margin-top:6px; padding-top:12px; border-top:1px solid var(--line); color:var(--ink); }
+.inventory-tags-heading small { color:var(--muted); font-size:11px; font-weight:500; }
+.product-tag-list { display:flex; flex-wrap:wrap; gap:4px; margin-top:7px; }
+.product-tag-list .soft-tag { font-size:9px; padding:3px 6px; }
 .finance-note strong { color:#1c6b55; white-space:nowrap; }
 .finance-page .compact-heading { margin-bottom:0; }
 .finance-page .table-wrap { overflow-x:auto; }
