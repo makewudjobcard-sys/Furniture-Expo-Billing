@@ -400,12 +400,12 @@ export async function POST(request: Request) {
         return Response.json({ error: "Managing Director confirmation is required." }, { status: 403 });
       }
       await env.DB.batch([
-        env.DB.prepare("DELETE FROM supplier_assignments"),
-        env.DB.prepare("DELETE FROM customer_interactions"),
-        env.DB.prepare("DELETE FROM tasks"),
-        env.DB.prepare("DELETE FROM held_orders"),
+        env.DB.prepare("DELETE FROM supplier_assignments WHERE 1=1"),
+        env.DB.prepare("DELETE FROM customer_interactions WHERE 1=1"),
+        env.DB.prepare("DELETE FROM tasks WHERE 1=1"),
+        env.DB.prepare("DELETE FROM held_orders WHERE 1=1"),
         env.DB.prepare("UPDATE bills SET status='cancelled' WHERE status<>'cancelled'"),
-        env.DB.prepare("DELETE FROM bills"),
+        env.DB.prepare("DELETE FROM bills WHERE 1=1"),
         env.DB.prepare("DELETE FROM counters WHERE key LIKE 'bill_%'"),
       ]);
       return Response.json(await readState("all"), { headers: { "Cache-Control": "no-store" } });
@@ -417,13 +417,13 @@ export async function POST(request: Request) {
         return Response.json({ error: "Reset authorization failed." }, { status: 403 });
       }
       await env.DB.batch([
-        env.DB.prepare("DELETE FROM supplier_assignments"),
-        env.DB.prepare("DELETE FROM customer_interactions"),
-        env.DB.prepare("DELETE FROM tasks"),
+        env.DB.prepare("DELETE FROM supplier_assignments WHERE 1=1"),
+        env.DB.prepare("DELETE FROM customer_interactions WHERE 1=1"),
+        env.DB.prepare("DELETE FROM tasks WHERE 1=1"),
         // Cancelling first lets the stock restoration trigger reverse every
         // ready-stock sample sale before its historical row is removed.
         env.DB.prepare("UPDATE bills SET status='cancelled' WHERE status<>'cancelled'"),
-        env.DB.prepare("DELETE FROM bills"),
+        env.DB.prepare("DELETE FROM bills WHERE 1=1"),
         env.DB.prepare("UPDATE counters SET value=0 WHERE key='bill'"),
       ]);
     } else if (action === "saveProduct") {
