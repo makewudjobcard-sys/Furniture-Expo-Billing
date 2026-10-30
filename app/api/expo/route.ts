@@ -10,7 +10,7 @@ type ProductInput = {
 type BillItemInput = {
   productId?: string; code?: string; hsnCode?: string; name?: string; size?: string;
   woodType?: string; price?: number; qty?: number; againstOrder?: boolean;
-  againstOrderExtra?: number; customizeDetails?: string;
+  againstOrderExtra?: number; customizeDetails?: string; imageKey?: string; imageUrl?: string;
 };
 
 type PaymentRecord = { id: string; amount: number; mode: string; note: string; date: string };
@@ -395,6 +395,22 @@ export async function POST(request: Request) {
       return Response.json({ error: "Only Managing Director can change showroom-wide settings." }, { status: 403 });
     }
 
+    if (action === "clearShowroomRecords") {
+      if (user.role !== "md" || clean(payload.confirmation) !== "CLEAR_SHOWROOM_RECORDS_2026") {
+        return Response.json({ error: "Managing Director confirmation is required." }, { status: 403 });
+      }
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM supplier_assignments"),
+        env.DB.prepare("DELETE FROM customer_interactions"),
+        env.DB.prepare("DELETE FROM tasks"),
+        env.DB.prepare("DELETE FROM held_orders"),
+        env.DB.prepare("UPDATE bills SET status='cancelled' WHERE status<>'cancelled'"),
+        env.DB.prepare("DELETE FROM bills"),
+        env.DB.prepare("DELETE FROM counters WHERE key LIKE 'bill_%'"),
+      ]);
+      return Response.json(await readState("all"), { headers: { "Cache-Control": "no-store" } });
+    }
+
     if (action === "resetDemoWorkspace") {
       const runtime = env as typeof env & { APP_SESSION_SECRET?: string };
       if (!runtime.APP_SESSION_SECRET || clean(payload.confirmation) !== runtime.APP_SESSION_SECRET) {
@@ -455,6 +471,7 @@ export async function POST(request: Request) {
         orderType: item.againstOrder ? "Against Order" : "Stock",
         againstOrderExtra: item.againstOrder ? round2(numeric(item.againstOrderExtra)) : 0,
         customizeDetails: item.againstOrder ? clean(item.customizeDetails) : "",
+        imageKey: clean(item.imageKey), imageUrl: clean(item.imageUrl),
       })).filter((item) => item.productId && item.name && item.price >= 0);
       if (!items.length) return Response.json({ error: "Add at least one product." }, { status: 400 });
 
@@ -602,6 +619,7 @@ export async function POST(request: Request) {
         qty: Math.max(1, whole(item.qty, 1)), againstOrder: Boolean(item.againstOrder),
         againstOrderExtra: item.againstOrder ? round2(numeric(item.againstOrderExtra)) : 0,
         customizeDetails: clean(item.customizeDetails),
+        imageKey: clean(item.imageKey), imageUrl: clean(item.imageUrl),
       })).filter((item) => item.name && item.productId);
       if (!items.length) return Response.json({ error: "Keep at least one valid product in the order." }, { status: 400 });
       const oldItems = safeJson<BillItemInput[]>(existing.itemsJson, []);

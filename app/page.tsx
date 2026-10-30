@@ -65,6 +65,8 @@ type BillItem = {
   orderType?: string;
   againstOrderExtra?: number;
   customizeDetails?: string;
+  imageKey?: string;
+  imageUrl?: string;
 };
 type Bill = {
   id: string;
@@ -262,6 +264,7 @@ const categories = [
   "Mattress",
   "Table",
   "Others",
+  "Custom Made",
 ];
 const paymentModes = ["CASH", "GPAY", "CARD", "RTGS", "BAJAJ", "CHEQUE"];
 const deliveryStages = ["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"];
@@ -391,6 +394,7 @@ async function uploadImage(file: File) {
 
 export default function Home() {
   const [authStatus, setAuthStatus] = useState<"checking" | "logged_out" | "logged_in">("checking");
+  const [loginMode, setLoginMode] = useState<"showroom" | "md">("showroom");
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -424,6 +428,8 @@ export default function Home() {
   const [showProductForm, setShowProductForm] = useState(false);
   const [showCustomProduct, setShowCustomProduct] = useState(false);
   const [customProductForm, setCustomProductForm] = useState({ name: "", size: "", woodType: "", price: 0, qty: 1, details: "" });
+  const [customProductImageFile, setCustomProductImageFile] = useState<File | null>(null);
+  const [customProductImagePreview, setCustomProductImagePreview] = useState("");
   const [stockEntry, setStockEntry] = useState<{ product: Product | null; quantity: number }>({ product: null, quantity: 1 });
   const [customer, setCustomer] = useState({
     name: "",
@@ -478,6 +484,9 @@ export default function Home() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeName>("forest");
   const [billingStep, setBillingStep] = useState<1 | 2 | 3>(1);
+  const [draftBillNo, setDraftBillNo] = useState("Next bill number");
+  const [draftOrderDate, setDraftOrderDate] = useState(() => isoDate());
+  const [savedBillForJobCard, setSavedBillForJobCard] = useState<Bill | null>(null);
   const [density, setDensity] = useState<DensityName>("comfortable");
   const [fontName, setFontName] = useState<FontName>("system");
   const [textScale, setTextScale] = useState<TextScaleName>("normal");
@@ -813,6 +822,17 @@ export default function Home() {
     () => state.bills.filter((bill) => bill.status !== "cancelled"),
     [state.bills],
   );
+  const draftBillPrefix = currentUser?.role === "client"
+    ? currentUser.clientKey.toUpperCase()
+    : (state.settings.billPrefix || "SHF").toUpperCase();
+  const nextBillNumber = useMemo(() => {
+    const highest = state.bills.reduce((max, bill) => {
+      if (!bill.billNo?.startsWith(`${draftBillPrefix}-`)) return max;
+      const number = Number(bill.billNo.slice(draftBillPrefix.length + 1));
+      return Number.isFinite(number) ? Math.max(max, number) : max;
+    }, 0);
+    return `${draftBillPrefix}-${String(highest + 1).padStart(2, "0")}`;
+  }, [state.bills, draftBillPrefix]);
   const productTotal = cart.reduce(
     (sum, item) => sum + item.price * item.qty,
     0,
@@ -1004,6 +1024,7 @@ export default function Home() {
     if (!cart.length) return notify("Add at least one product.");
     if (!customer.name.trim() || !customer.phone.trim())
       return notify("Customer name and phone number are required.");
+    if (!customer.deliveryDate) return notify("Choose the expected delivery date before saving.");
     if (!online) {
       setSaveError("Internet connection is required. Your draft is safe—reconnect and press Retry save.");
       return notify("Internet is required to save an order safely.");
@@ -1037,6 +1058,8 @@ export default function Home() {
             againstOrder: item.againstOrder,
             againstOrderExtra: item.againstOrderExtra,
             customizeDetails: item.customizeDetails,
+            imageKey: item.imageKey,
+            imageUrl: item.imageUrl,
           })),
           discountType,
           discountValue,
@@ -1057,6 +1080,9 @@ export default function Home() {
         return;
       }
       billRequestIdRef.current = "";
+      setDraftBillNo(created.billNo);
+      setDraftOrderDate(created.createdAt.slice(0, 10));
+      setSavedBillForJobCard(created);
       setCart([]);
       setCustomer({
         name: "",
@@ -1111,7 +1137,6 @@ export default function Home() {
     if (billingStep === 1) {
       if (!customer.name.trim() || !customer.phone.trim())
         return notify("Enter customer name and mobile number to continue.");
-      if (!customer.deliveryDate) return notify("Choose the expected delivery date.");
       setBillingStep(2);
       return;
     }
@@ -1147,6 +1172,13 @@ export default function Home() {
     setResumedHoldId("");
     billRequestIdRef.current = "";
     window.localStorage.removeItem("smaarthome-order-draft");
+  }
+
+  function startNewOrder() {
+    clearBillingDraft();
+    setDraftOrderDate(isoDate());
+    setDraftBillNo(nextBillNumber);
+    setActive("billing");
   }
 
   async function holdCurrentBill() {
@@ -1854,17 +1886,28 @@ export default function Home() {
     closeScanner();
   }
 
-  function addCustomProduct(event: FormEvent) {
+  async function addCustomProduct(event: FormEvent) {
     event.preventDefault();
     const name = customProductForm.name.trim();
     if (!name || customProductForm.price <= 0) return notify("Custom product name and price are required.");
+    setBusy(true);
+    let uploadedImage = { key: "", url: "" };
+    try {
+      if (customProductImageFile) uploadedImage = await uploadImage(customProductImageFile);
+    } catch (error) {
+      setBusy(false);
+      return notify(error instanceof Error ? error.message : "Custom product image upload failed.");
+    }
     const code = `CUSTOM-${Date.now().toString(36).toUpperCase()}`;
     const custom: CartItem = {
-      id: `custom-${crypto.randomUUID()}`, code, hsnCode: "", name, category: "Custom Made", size: customProductForm.size.trim(), woodType: customProductForm.woodType.trim(), price: Math.max(0, customProductForm.price), stockQty: 0, mrp: customProductForm.price, notes: customProductForm.details.trim(), imageKey: "", imageUrl: "", qty: Math.max(1, Math.floor(customProductForm.qty || 1)), againstOrder: true, againstOrderExtra: 0, customizeDetails: customProductForm.details.trim(),
+      id: `custom-${crypto.randomUUID()}`, code, hsnCode: "", name, category: "Custom Made", size: customProductForm.size.trim(), woodType: customProductForm.woodType.trim(), price: Math.max(0, customProductForm.price), stockQty: 0, mrp: customProductForm.price, notes: customProductForm.details.trim(), imageKey: uploadedImage.key, imageUrl: uploadedImage.url, qty: Math.max(1, Math.floor(customProductForm.qty || 1)), againstOrder: true, againstOrderExtra: 0, customizeDetails: customProductForm.details.trim(),
     };
     setCart((items) => [...items, custom]);
     setCustomProductForm({ name: "", size: "", woodType: "", price: 0, qty: 1, details: "" });
+    setCustomProductImageFile(null);
+    setCustomProductImagePreview("");
     setShowCustomProduct(false);
+    setBusy(false);
     notify(`${name} added as a custom-made product.`);
   }
 
@@ -1958,8 +2001,12 @@ export default function Home() {
         <section className="login-card">
           <div className="login-brand"><span>SH</span><div><strong>Smaarthome Furniture</strong><small>Cloud Billing & Inventory</small></div></div>
           <div className="login-copy"><span className="eyebrow">Authorised counter access</span><h1>Welcome back.</h1><p>Sign in to continue. Every bill, stock update and product image stays synced across your PCs and mobiles.</p></div>
+          <div className="login-tabs" role="tablist" aria-label="Login type">
+            <button type="button" className={loginMode === "showroom" ? "active" : ""} onClick={() => { setLoginMode("showroom"); setLoginForm({ username: "", password: "" }); setLoginError(""); }}>Showroom login</button>
+            <button type="button" className={loginMode === "md" ? "active" : ""} onClick={() => { setLoginMode("md"); setLoginForm({ username: "Managing Director", password: "" }); setLoginError(""); }}>MD login</button>
+          </div>
           <form onSubmit={submitLogin}>
-            <label>Username<input value={loginForm.username} onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value })} autoComplete="username" required /></label>
+            {loginMode === "showroom" ? <label>Choose showroom<select value={loginForm.username} onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value, password: "" })} required><option value="">Select showroom</option><option value="Iyer Bungalow">Iyer Bungalow</option><option value="Bypass">Bypass</option><option value="Highway">Highway</option></select></label> : <label>MD username<input value={loginForm.username} readOnly autoComplete="username" required /></label>}
             <label>Password<input type="password" value={loginForm.password} onChange={(event) => setLoginForm({ ...loginForm, password: event.target.value })} autoComplete="current-password" required /></label>
             {loginError && <div className="login-error" role="alert">{loginError}</div>}
             <button className="primary-action" disabled={loginBusy}>{loginBusy ? "Signing in…" : "Open billing desk"}<span>→</span></button>
@@ -1992,7 +2039,7 @@ export default function Home() {
           />
           <Nav
             active={active === "billing"}
-            onClick={() => setActive("billing")}
+            onClick={startNewOrder}
             icon="₹"
             label="New order"
           />
@@ -2071,7 +2118,7 @@ export default function Home() {
           />
           <Nav
             active={active === "billing"}
-            onClick={() => setActive("billing")}
+            onClick={startNewOrder}
             icon="₹"
             label="Order"
           />
@@ -2115,7 +2162,7 @@ export default function Home() {
               </div>
               <div className="heading-actions">
                 <button className="secondary-action" onClick={() => { setTaskCategoryLocked(false); setTaskTemplateKey(""); setTaskForm({ category: "General", priority: "Normal", status: "Pending", dueDate: isoDate() }); setShowTaskForm(true); }}>＋ Add task</button>
-                <button className="primary-small" onClick={() => setActive("billing")}>＋ New order</button>
+                <button className="primary-small" onClick={startNewOrder}>＋ New order</button>
               </div>
             </div>
             <div className="today-overview">
@@ -2282,7 +2329,7 @@ export default function Home() {
                 <span>{billingStep > step ? "✓" : step}</span><div><strong>{step === 1 ? "Customer" : step === 2 ? "Products" : "Payment"}</strong><small>{step === 1 ? "Name & delivery" : step === 2 ? "Choose items" : "Review & save"}</small></div>
               </button>)}
               <div className="billing-progress-summary">
-                <p>{cart.reduce((sum, item) => sum + item.qty, 0)} items · {money(grandTotal)} <em>{online ? "Draft auto-saved" : "Offline draft safe"}</em></p>
+                <p><b className="draft-bill-number">{draftBillNo}</b><span className="draft-date">{new Date(draftOrderDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span><br />{cart.reduce((sum, item) => sum + item.qty, 0)} items · {money(grandTotal)} <em>{online ? "Draft auto-saved" : "Offline draft safe"}</em></p>
                 <div><button onClick={() => setShowHeldOrders(true)}>Held bills <b>{state.heldOrders.length}</b></button><button onClick={holdCurrentBill}>Hold bill</button><button onClick={() => setShowShortcuts(true)} aria-label="Keyboard shortcuts">⌨</button></div>
               </div>
             </div>
@@ -2524,7 +2571,6 @@ export default function Home() {
                     placeholder="Optional"
                   />
                 </label>
-                <label>Expected delivery<input type="date" value={customer.deliveryDate} onChange={(event) => setCustomer({ ...customer, deliveryDate: event.target.value })} required /></label>
                 <details className="more-details">
                   <summary><span><b>More details</b><small>Staff, accountant, manager and notes</small></span><em>＋</em></summary>
                   <div className="more-details-body">
@@ -2538,6 +2584,7 @@ export default function Home() {
                 <div className="wizard-actions single"><button className="primary-action" onClick={continueBilling}>Continue to products <span>→</span></button></div>
               </div>
               <div className={`checkout-step ${billingStep !== 3 ? "wizard-hidden" : ""}`}>
+              <div className="payment-product-strip"><div><span className="eyebrow">Order preview</span><strong>Products on this bill</strong></div><div className="payment-product-images">{cart.map((item, index) => <div key={`${item.id}-${index}`} title={`${item.name} · ${item.size || ""}`}><ProductThumb product={item} /><small>{item.name}</small></div>)}</div></div>
               <div className="totals detailed">
                 <div>
                   <span>Items total</span>
@@ -2643,6 +2690,7 @@ export default function Home() {
                   <strong>{money(balance)}</strong>
                 </div>
               </div>
+              <label className="expected-delivery-final">Expected delivery date<input type="date" value={customer.deliveryDate} onChange={(event) => setCustomer({ ...customer, deliveryDate: event.target.value })} required /></label>
               {saveError && <div className="save-error" role="alert"><span>!</span><div><strong>Order not confirmed yet</strong><small>{saveError}</small></div><button onClick={confirmBill} disabled={busy}>Retry save</button></div>}
               <div className="wizard-actions"><button className="secondary-action" onClick={() => setBillingStep(2)}>← Back</button><button
                   className="primary-action"
@@ -2876,6 +2924,7 @@ export default function Home() {
                 ↓ Sales Excel
               </button>
             </div>
+            {savedBillForJobCard && <div className="post-save-job-card-box"><div><span className="eyebrow">Saved successfully</span><strong>{savedBillForJobCard.billNo} · {savedBillForJobCard.customerName}</strong><small>Custom production details can be added now. Nothing is created until you choose the next step.</small></div><button className="primary-small" onClick={() => { setJobCardForm({ stage: "New", referenceImages: [], billId: savedBillForJobCard.id, customerName: savedBillForJobCard.customerName, phone: savedBillForJobCard.customerPhone }); setShowJobCardForm(true); setSavedBillForJobCard(null); }}>＋ Add to job card</button><button className="text-button" onClick={() => setSavedBillForJobCard(null)}>Dismiss</button></div>}
             <div className="inventory-toolbar">
               <label className="search-box compact-search">
                 <span>⌕</span>
@@ -3711,6 +3760,7 @@ export default function Home() {
             <label>Material / wood<input value={customProductForm.woodType} onChange={(event) => setCustomProductForm({ ...customProductForm, woodType: event.target.value })} placeholder="Teak, fabric, plywood…" /></label>
             <label>Unit price<input type="number" min="0" value={customProductForm.price || ""} onChange={(event) => setCustomProductForm({ ...customProductForm, price: Math.max(0, Number(event.target.value)) })} required /></label>
             <label>Quantity<input type="number" min="1" step="1" value={customProductForm.qty} onChange={(event) => setCustomProductForm({ ...customProductForm, qty: Math.max(1, Math.floor(Number(event.target.value) || 1)) })} /></label>
+            <label className="wide">Reference image<input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0] || null; setCustomProductImageFile(file); setCustomProductImagePreview(file ? URL.createObjectURL(file) : ""); }} /><small>Attach the customer reference or design photo.</small>{customProductImagePreview && <img className="custom-image-preview" src={customProductImagePreview} alt="Custom product preview" />}</label>
             <label className="wide">Production / customer notes<textarea rows={3} value={customProductForm.details} onChange={(event) => setCustomProductForm({ ...customProductForm, details: event.target.value })} placeholder="Measurements, finish, fabric, reference or production instructions…" /></label>
           </div>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowCustomProduct(false)}>Cancel</button><button className="primary-small">Add to this bill</button></div>

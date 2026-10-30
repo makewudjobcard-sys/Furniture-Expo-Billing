@@ -1288,3 +1288,50 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
   .dashboard-task-controls label { flex: 1 1 150px; grid-template-columns: 1fr; }
   .dashboard-task-controls select { width: 100%; }
 }
+
+/* Final polish: lighter navigation, resilient inputs and payment preview. */
+.sidebar { background: linear-gradient(180deg,#eff7f3 0%,#dcece5 100%); color:var(--ink); border-right:1px solid var(--line); }
+.sidebar .brand-mark strong,.sidebar nav button b,.sidebar .nav-section-label { color:var(--ink); }
+.sidebar .brand-mark small,.sidebar nav button,.sidebar .role-badge small,.sidebar-theme,.sidebar .sync-card small { color:#5e7369; }
+.sidebar nav button:hover,.sidebar nav button.active { background:rgba(255,255,255,.78); color:var(--ink); }
+.sidebar nav button.active { box-shadow:inset 3px 0 var(--clay),0 7px 20px rgba(48,112,84,.08); }
+.sidebar .role-badge,.sidebar .sync-card { background:rgba(255,255,255,.58); border-color:rgba(58,104,84,.18); }
+.sidebar .role-badge strong,.sidebar .sync-card strong { color:var(--ink); }
+.sidebar .sync-card button,.sidebar .sidebar-logout { color:#5e7369; }
+.sidebar .sidebar-logout:hover { background:rgba(255,255,255,.72); color:var(--ink); }
+.sidebar-theme select { background:rgba(255,255,255,.75); border-color:rgba(58,104,84,.2); color:var(--ink); }
+:root[data-theme="midnight"] .sidebar { background:#080f1c; color:#e9eef7; border-right-color:#334155; }
+:root[data-theme="midnight"] .sidebar .brand-mark strong,:root[data-theme="midnight"] .sidebar nav button b,:root[data-theme="midnight"] .sidebar .nav-section-label { color:#e9eef7; }
+:root[data-theme="midnight"] .sidebar .brand-mark small,:root[data-theme="midnight"] .sidebar nav button,:root[data-theme="midnight"] .sidebar .role-badge small,:root[data-theme="midnight"] .sidebar-theme,:root[data-theme="midnight"] .sidebar .sync-card small { color:#a7b2c4; }
+:root[data-theme="midnight"] .sidebar nav button:hover,:root[data-theme="midnight"] .sidebar nav button.active { background:rgba(255,255,255,.1); color:#fff; }
+:root[data-theme="midnight"] .sidebar .role-badge,:root[data-theme="midnight"] .sidebar .sync-card { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.12); }
+:root[data-theme="midnight"] .sidebar .role-badge strong,:root[data-theme="midnight"] .sidebar .sync-card strong { color:#fff; }
+
+.login-tabs { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:24px; padding:5px; border:1px solid var(--line); border-radius:13px; background:#f0f4f1; }
+.login-tabs button { min-height:44px; border:0; border-radius:9px; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; font-weight:800; }
+.login-tabs button.active { background:var(--surface); color:var(--success); box-shadow:0 5px 16px rgba(48,112,84,.1); }
+.login-card form select { height:48px; border:1px solid #d8ccc0; border-radius:11px; padding:0 13px; background:#fff; color:var(--ink); outline:none; font-size:14px; }
+.draft-bill-number { color:var(--clay); letter-spacing:.04em; }
+.draft-date { margin-left:8px; color:var(--muted); font-size:10px; font-weight:700; }
+.payment-product-strip { display:grid; gap:12px; padding:16px; border:1px solid var(--line); border-radius:15px; background:color-mix(in srgb,var(--paper) 60%,var(--surface)); }
+.payment-product-strip > div:first-child { display:grid; gap:2px; }
+.payment-product-strip > div:first-child strong { font-size:15px; }
+.payment-product-images { display:flex; gap:11px; overflow-x:auto; padding-bottom:2px; }
+.payment-product-images > div { flex:0 0 74px; display:grid; gap:5px; justify-items:center; }
+.payment-product-images .table-thumb { width:64px; height:56px; }
+.payment-product-images small { width:74px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:9px; text-align:center; }
+.expected-delivery-final { display:grid; gap:7px; padding:14px; border:1px solid color-mix(in srgb,var(--clay) 28%,var(--line)); border-radius:13px; background:color-mix(in srgb,var(--clay) 6%,var(--surface)); color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; }
+.expected-delivery-final input { min-height:48px; width:100%; border:1px solid var(--line); border-radius:10px; padding:0 12px; background:var(--surface); color:var(--ink); font-size:14px; text-transform:none; letter-spacing:0; }
+.post-save-job-card-box { display:flex; align-items:center; gap:16px; margin:0 0 18px; padding:16px 18px; border:1px solid #b8d6c5; border-radius:16px; background:linear-gradient(110deg,#effaf3,#fffdf9); }
+.post-save-job-card-box > div { display:grid; gap:3px; flex:1; min-width:0; }
+.post-save-job-card-box > div strong { font-size:14px; }
+.post-save-job-card-box > div small { color:var(--muted); font-size:11px; }
+.custom-image-preview { width:100%; max-height:160px; object-fit:cover; border:1px solid var(--line); border-radius:12px; margin-top:6px; }
+.form-grid label,.customer-fields label,.checkout-step label,.payment-pair label { min-width:0; }
+.form-grid input,.form-grid select,.form-grid textarea,.customer-fields input,.customer-fields select,.customer-fields textarea,.checkout-step input,.checkout-step select,.checkout-step textarea { max-width:100%; min-width:0; }
+.modal-card,.cart-panel,.cart-scroll-area { min-width:0; }
+
+@media (max-width:640px) {
+  .post-save-job-card-box { align-items:stretch; flex-direction:column; }
+  .post-save-job-card-box .primary-small,.post-save-job-card-box .text-button { width:100%; }
+}
