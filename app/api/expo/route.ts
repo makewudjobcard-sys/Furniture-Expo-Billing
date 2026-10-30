@@ -25,6 +25,9 @@ type InteractionInput = { id?: string; customerName?: string; customerPhone?: st
 type AssignmentInput = { id?: string; billId?: string; billNo?: string; productId?: string; productCode?: string; productName?: string; qty?: number; supplierId?: string; purchaseCost?: number; advancePaid?: number; expectedDate?: string; status?: string; notes?: string };
 type LeadInput = { id?: string; customerName?: string; phone?: string; source?: string; interest?: string; assignedTo?: string; followUpDate?: string; status?: string; notes?: string };
 type JobCardInput = { id?: string; jobNo?: string; customerName?: string; phone?: string; billId?: string; measurements?: string; woodMaterial?: string; fabric?: string; foam?: string; polish?: string; referenceImages?: string[]; estimatedCost?: number; assignedTo?: string; expectedDate?: string; stage?: string; notes?: string };
+type FinanceCommitmentInput = { id?: string; amount?: number; payee?: string; dueDate?: string; accountHead?: string; raisedBy?: string; approvedBy?: string };
+type FinanceExpenseInput = { id?: string; amount?: number; payee?: string; automatedDate?: string; accountHead?: string; raisedBy?: string; approvedBy?: string };
+type FinanceControlsInput = { accountFund?: number; cashInHand?: number; deliveredCollection?: number; pendingCollection?: number };
 
 const SAMPLE_PRODUCTS: ProductInput[] = [
   { code: "SOFA-001", hsnCode: "94016100", name: "3 Seater Fabric Sofa", category: "Sofa", size: "3 Seater", price: 55000, stockQty: 2, mrp: 65000 },
@@ -86,6 +89,21 @@ async function ensureSchema() {
       id TEXT PRIMARY KEY, checked_by TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL DEFAULT '[]',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_commitments (
+      id TEXT PRIMARY KEY, amount DOUBLE PRECISION NOT NULL DEFAULT 0, payee TEXT NOT NULL DEFAULT '', due_date TEXT NOT NULL DEFAULT '',
+      account_head TEXT NOT NULL DEFAULT '', raised_by TEXT NOT NULL DEFAULT '', approved_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_expenses (
+      id TEXT PRIMARY KEY, amount DOUBLE PRECISION NOT NULL DEFAULT 0, payee TEXT NOT NULL DEFAULT '', automated_date TEXT NOT NULL DEFAULT '',
+      account_head TEXT NOT NULL DEFAULT '', raised_by TEXT NOT NULL DEFAULT '', approved_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_controls (
+      id INTEGER PRIMARY KEY CHECK (id=1), account_fund DOUBLE PRECISION NOT NULL DEFAULT 0,
+      cash_in_hand DOUBLE PRECISION NOT NULL DEFAULT 0, delivered_collection DOUBLE PRECISION NOT NULL DEFAULT 0,
+      pending_collection DOUBLE PRECISION NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_leads_follow_up ON leads(follow_up_date)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
     db.prepare("ALTER TABLE bills ADD COLUMN IF NOT EXISTS client_key TEXT NOT NULL DEFAULT 'SHF'"),
@@ -101,6 +119,7 @@ async function ensureSchema() {
     await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Smaarthome Furniture','Showroom Billing & Operations',18,'SHF')`).run();
     await db.prepare(`UPDATE settings SET business_name='Smaarthome Furniture',subtitle='Showroom Billing & Operations',bill_prefix=CASE WHEN bill_prefix='EXP' THEN 'SHF' ELSE bill_prefix END WHERE business_name='Furniture Expo'`).run();
     await db.prepare("INSERT OR IGNORE INTO counters (key,value) VALUES ('bill',0)").run();
+    await db.prepare("INSERT OR IGNORE INTO finance_controls (id,account_fund,cash_in_hand,delivered_collection,pending_collection) VALUES (1,0,0,0,0)").run();
     const count = await db.prepare("SELECT COUNT(*) AS count FROM products").first<{ count: number }>();
     if (!Number(count?.count || 0)) await db.batch(SAMPLE_PRODUCTS.map(productUpsertStatement));
     return;
@@ -164,6 +183,21 @@ async function ensureSchema() {
       id TEXT PRIMARY KEY, checked_by TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_commitments (
+      id TEXT PRIMARY KEY, amount REAL NOT NULL DEFAULT 0, payee TEXT NOT NULL DEFAULT '', due_date TEXT NOT NULL DEFAULT '',
+      account_head TEXT NOT NULL DEFAULT '', raised_by TEXT NOT NULL DEFAULT '', approved_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_expenses (
+      id TEXT PRIMARY KEY, amount REAL NOT NULL DEFAULT 0, payee TEXT NOT NULL DEFAULT '', automated_date TEXT NOT NULL DEFAULT '',
+      account_head TEXT NOT NULL DEFAULT '', raised_by TEXT NOT NULL DEFAULT '', approved_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_controls (
+      id INTEGER PRIMARY KEY CHECK (id=1), account_fund REAL NOT NULL DEFAULT 0,
+      cash_in_hand REAL NOT NULL DEFAULT 0, delivered_collection REAL NOT NULL DEFAULT 0,
+      pending_collection REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at DESC)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)"),
@@ -224,6 +258,7 @@ async function ensureSchema() {
   await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Smaarthome Furniture','Showroom Billing & Operations',18,'SHF')`).run();
   await db.prepare(`UPDATE settings SET business_name='Smaarthome Furniture',subtitle='Showroom Billing & Operations',bill_prefix=CASE WHEN bill_prefix='EXP' THEN 'SHF' ELSE bill_prefix END WHERE business_name='Furniture Expo'`).run();
   await db.prepare("INSERT OR IGNORE INTO counters (key,value) VALUES ('bill',0)").run();
+  await db.prepare("INSERT OR IGNORE INTO finance_controls (id,account_fund,cash_in_hand,delivered_collection,pending_collection) VALUES (1,0,0,0,0)").run();
   const count = await db.prepare("SELECT COUNT(*) AS count FROM products").first<{ count: number }>();
   if (!count?.count) await db.batch(SAMPLE_PRODUCTS.map(productUpsertStatement));
 }
@@ -243,7 +278,7 @@ function productUpsertStatement(input: ProductInput) {
 }
 
 async function readState(scopeKey = "all") {
-  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows, leadRows, jobRows, heldRows, verificationRows] = await Promise.all([
+  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows, leadRows, jobRows, heldRows, verificationRows, commitmentRows, expenseRows, financeControlRow] = await Promise.all([
     env.DB.prepare(`SELECT id,code,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
       stock_qty AS stockQty,mrp,notes,image_key AS imageKey,updated_at AS updatedAt FROM products ORDER BY category,name`).all(),
     env.DB.prepare(`SELECT id,bill_no AS billNo,customer_name AS customerName,customer_phone AS customerPhone,
@@ -286,6 +321,12 @@ async function readState(scopeKey = "all") {
       FROM held_orders ORDER BY updated_at DESC`).all(),
     env.DB.prepare(`SELECT id,checked_by AS checkedBy,notes,lines_json AS linesJson,created_at AS createdAt
       FROM stock_verifications ORDER BY created_at DESC LIMIT 50`).all(),
+    env.DB.prepare(`SELECT id,amount,payee,due_date AS dueDate,account_head AS accountHead,raised_by AS raisedBy,approved_by AS approvedBy,created_at AS createdAt
+      FROM finance_commitments ORDER BY due_date,created_at DESC`).all(),
+    env.DB.prepare(`SELECT id,amount,payee,automated_date AS automatedDate,account_head AS accountHead,raised_by AS raisedBy,approved_by AS approvedBy,created_at AS createdAt
+      FROM finance_expenses ORDER BY automated_date DESC,created_at DESC`).all(),
+    env.DB.prepare(`SELECT account_fund AS accountFund,cash_in_hand AS cashInHand,delivered_collection AS deliveredCollection,pending_collection AS pendingCollection
+      FROM finance_controls WHERE id=1`).first(),
   ]);
   const products = productRows.results.map((row: Record<string, unknown>) => ({ ...row, imageUrl: row.imageKey ? `/api/images/${encodeURIComponent(String(row.imageKey))}` : "" }));
   const gstRate = Number((settingRow as Record<string, unknown> | null)?.gstRate ?? 18);
@@ -322,6 +363,12 @@ async function readState(scopeKey = "all") {
     staffNamesJson: undefined,
     counterNamesJson: undefined,
   } : null;
+  const financeControls = scopeKey === "all" ? {
+    accountFund: numeric((financeControlRow as Record<string, unknown> | null)?.accountFund),
+    cashInHand: numeric((financeControlRow as Record<string, unknown> | null)?.cashInHand),
+    deliveredCollection: numeric((financeControlRow as Record<string, unknown> | null)?.deliveredCollection),
+    pendingCollection: numeric((financeControlRow as Record<string, unknown> | null)?.pendingCollection),
+  } : { accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 };
   return {
     products,
     bills,
@@ -335,6 +382,9 @@ async function readState(scopeKey = "all") {
     jobCards: jobRows.results.map((row: Record<string, unknown>) => ({ ...row, referenceImages: safeJson(row.referenceImagesJson, []), referenceImagesJson: undefined })),
     heldOrders: heldRows.results.map((row: Record<string, unknown>) => ({ ...row, payload: safeJson(row.payloadJson, {}), payloadJson: undefined })),
     stockVerifications: verificationRows.results.map((row: Record<string, unknown>) => ({ ...row, lines: safeJson(row.linesJson, []), linesJson: undefined })),
+    financeCommitments: scopeKey === "all" ? commitmentRows.results : [],
+    financeExpenses: scopeKey === "all" ? expenseRows.results : [],
+    financeControls,
     syncedAt: new Date().toISOString(),
   };
 }
@@ -360,6 +410,8 @@ function auditDescription(action: string, payload: Record<string, unknown>) {
     saveJobCard: `Job card ${clean(jobCard.jobNo, "custom work")} saved`, deleteJobCard: `Job card removed`,
     saveHeldOrder: `Bill held as ${clean(heldOrder.name, "draft")}`, deleteHeldOrder: `Held bill removed`,
     saveStockVerification: `Physical stock verification completed`,
+    saveFinanceControls: `Finance controls updated`, saveCommitment: `Finance commitment saved`, deleteCommitment: `Finance commitment removed`,
+    saveExpense: `Expense saved`, deleteExpense: `Expense removed`,
   };
   const entityType = action.toLowerCase().includes("bill") || action.startsWith("setDelivery") || action === "addPayment" ? "order"
     : action.toLowerCase().includes("product") || action === "adjustStock" ? "product"
@@ -394,6 +446,9 @@ export async function POST(request: Request) {
     if (["resetDemoWorkspace", "saveSettings"].includes(action) && user.role !== "md") {
       return Response.json({ error: "Only Managing Director can change showroom-wide settings." }, { status: 403 });
     }
+    if (["saveFinanceControls", "saveCommitment", "deleteCommitment", "saveExpense", "deleteExpense"].includes(action) && user.role !== "md") {
+      return Response.json({ error: "Only Managing Director can manage finance records." }, { status: 403 });
+    }
 
     if (action === "clearShowroomRecords") {
       if (user.role !== "md" || clean(payload.confirmation) !== "CLEAR_SHOWROOM_RECORDS_2026") {
@@ -426,6 +481,36 @@ export async function POST(request: Request) {
         env.DB.prepare("DELETE FROM bills WHERE 1=1"),
         env.DB.prepare("UPDATE counters SET value=0 WHERE key='bill'"),
       ]);
+    } else if (action === "saveFinanceControls") {
+      const controls = (payload.controls || {}) as FinanceControlsInput;
+      await env.DB.prepare(`INSERT INTO finance_controls (id,account_fund,cash_in_hand,delivered_collection,pending_collection)
+        VALUES (1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_fund=excluded.account_fund,cash_in_hand=excluded.cash_in_hand,
+        delivered_collection=excluded.delivered_collection,pending_collection=excluded.pending_collection,updated_at=CURRENT_TIMESTAMP`)
+        .bind(round2(numeric(controls.accountFund)), round2(numeric(controls.cashInHand)), round2(numeric(controls.deliveredCollection)), round2(numeric(controls.pendingCollection))).run();
+    } else if (action === "saveCommitment") {
+      const value = (payload.commitment || {}) as FinanceCommitmentInput;
+      const payee = clean(value.payee);
+      const amount = round2(numeric(value.amount));
+      if (!payee || amount <= 0) return Response.json({ error: "Amount and payee are required." }, { status: 400 });
+      const id = clean(value.id) || uid("commit");
+      await env.DB.prepare(`INSERT INTO finance_commitments (id,amount,payee,due_date,account_head,raised_by,approved_by)
+        VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET amount=excluded.amount,payee=excluded.payee,due_date=excluded.due_date,
+        account_head=excluded.account_head,raised_by=excluded.raised_by,approved_by=excluded.approved_by,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, amount, payee, clean(value.dueDate), clean(value.accountHead), clean(value.raisedBy), clean(value.approvedBy)).run();
+    } else if (action === "deleteCommitment") {
+      await env.DB.prepare("DELETE FROM finance_commitments WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveExpense") {
+      const value = (payload.expense || {}) as FinanceExpenseInput;
+      const payee = clean(value.payee);
+      const amount = round2(numeric(value.amount));
+      if (!payee || amount <= 0) return Response.json({ error: "Amount and payee are required." }, { status: 400 });
+      const id = clean(value.id) || uid("expense");
+      await env.DB.prepare(`INSERT INTO finance_expenses (id,amount,payee,automated_date,account_head,raised_by,approved_by)
+        VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET amount=excluded.amount,payee=excluded.payee,automated_date=excluded.automated_date,
+        account_head=excluded.account_head,raised_by=excluded.raised_by,approved_by=excluded.approved_by,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, amount, payee, clean(value.automatedDate) || new Date().toISOString().slice(0, 10), clean(value.accountHead), clean(value.raisedBy), clean(value.approvedBy)).run();
+    } else if (action === "deleteExpense") {
+      await env.DB.prepare("DELETE FROM finance_expenses WHERE id=?").bind(clean(payload.id)).run();
     } else if (action === "saveProduct") {
       const product = payload.product as ProductInput;
       if (!clean(product?.code) || !clean(product?.name) || numeric(product?.price) <= 0) {
