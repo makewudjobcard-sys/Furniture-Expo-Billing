@@ -364,6 +364,10 @@ function displayEntryDate(value: string) {
   const parts = value.split("-");
   return parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : value;
 }
+function productCodePreview(category: string, name: string) {
+  const part = (value: string, fallback: string) => value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 4) || fallback;
+  return `${isoDate().replace(/-/g, "")}-${part(category, "PROD")}-${part(name, "ITEM")}-AUTO`;
+}
 function productTone(product: { code: string }) {
   const seed = [...product.code].reduce(
     (sum, char) => sum + char.charCodeAt(0),
@@ -2911,6 +2915,7 @@ export default function Home() {
                 </button>
               </div>
             </div>
+            <div className="inventory-howto"><span className="inventory-howto-icon">i</span><div><strong>How to enter inventory</strong><span><b>Add product</b> creates the product and generates its code after saving. Use <b>Stock in</b> on any row to add pieces with today’s date or choose another entry date.</span></div></div>
             <div className="metric-grid">
               <Metric
                 label="Product models"
@@ -3503,6 +3508,7 @@ export default function Home() {
               </div>
               <div className="heading-actions"><button className="secondary-action" onClick={() => setShowCommitmentForm(true)}>＋ Commitment</button><button className="primary-small" onClick={() => setShowExpenseForm(true)}>＋ Expense</button></div>
             </div>
+            <div className="finance-howto"><span className="inventory-howto-icon">i</span><div><strong>Where to enter details</strong><span>Use <b>Commitment log → Add commitment</b> for one-week commitments. Use <b>Expense log → Add expense</b> for expenses. Use <b>Financial overview</b> for cash, bank, deposit and excess values. Bills are fetched automatically in Bill balance details.</span></div></div>
             <div className="metric-grid finance-metrics">
               <Metric label="Commitments" value={money(financeCommitmentTotal)} note={`${state.financeCommitments.length} records`} />
               <Metric label="Expenses" value={money(financeExpenseTotal)} note={`${state.financeExpenses.length} records`} />
@@ -3757,7 +3763,7 @@ export default function Home() {
             <div className="modal-head"><div><span className="eyebrow">Quick inventory</span><h2>Receive stock</h2></div><button type="button" onClick={() => setStockEntry({ product: null, quantity: 1, entryDate: isoDate() })}>×</button></div>
             <div className="stock-entry-product"><ProductThumb product={stockEntry.product} /><div><strong>{stockEntry.product.name}</strong><small>{stockEntry.product.code} · Current stock {stockEntry.product.stockQty}</small></div></div>
             <label className="stock-entry-field">Pieces received<input type="number" min="1" step="1" value={stockEntry.quantity} onChange={(event) => setStockEntry({ ...stockEntry, quantity: Math.max(1, Number(event.target.value) || 1) })} /></label>
-            <label className="stock-entry-field">Stock entry date<input type="date" value={stockEntry.entryDate} onChange={(event) => setStockEntry({ ...stockEntry, entryDate: event.target.value })} /><small>Format: DD-MM-YYYY · defaults to today</small></label>
+            <label className="stock-entry-field">Stock entry date<input type="date" value={stockEntry.entryDate} onChange={(event) => setStockEntry({ ...stockEntry, entryDate: event.target.value })} /><small>{stockEntry.entryDate === isoDate() ? "Today" : displayEntryDate(stockEntry.entryDate)} · Format: DD-MM-YYYY</small></label>
             <div className="stock-entry-result"><span>New ready stock</span><strong>{stockEntry.product.stockQty + Math.floor(stockEntry.quantity)}</strong></div>
             <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setStockEntry({ product: null, quantity: 1, entryDate: isoDate() })}>Cancel</button><button className="primary-small" disabled={busy}>Add to stock</button></div>
           </form>
@@ -3807,7 +3813,7 @@ export default function Home() {
               <label>
                 Product code
                 <input
-                  value={productForm.code}
+                  value={productForm.code || productCodePreview(productForm.category, productForm.name)}
                   onChange={(event) =>
                     setProductForm({
                       ...productForm,
@@ -3817,7 +3823,7 @@ export default function Home() {
                   placeholder={productForm.id ? "Product code" : "Auto-generated after saving"}
                   readOnly={!productForm.id}
                 />
-                {!productForm.id && <small className="field-hint">Date + category + product + common serial number will be generated automatically.</small>}
+                {!productForm.id && <small className="field-hint">Preview only. Click “Save product”; the real common serial number will be generated and shown in the inventory table.</small>}
               </label>
               <label>
                 HSN code

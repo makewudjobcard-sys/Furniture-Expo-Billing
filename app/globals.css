@@ -1363,7 +1363,14 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 }
 
 .finance-page { --finance-accent: #257b67; }
+.finance-howto { display:flex; align-items:flex-start; gap:11px; margin:2px 0 20px; padding:14px 16px; border:1px solid #cce1d6; border-radius:14px; background:#f1faf5; color:#48695a; font-size:12px; line-height:1.5; }
+.finance-howto > div { display:grid; gap:3px; }
+.finance-howto strong { color:#1c6b55; }
 .inventory-page .metric-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.inventory-howto { display:flex; align-items:flex-start; gap:11px; margin:20px 0 4px; padding:14px 16px; border:1px solid #cce1d6; border-radius:14px; background:#f1faf5; color:#48695a; font-size:12px; line-height:1.5; }
+.inventory-howto > div { display:grid; gap:3px; }
+.inventory-howto strong { color:#1c6b55; }
+.inventory-howto-icon { display:grid; place-items:center; width:24px; height:24px; border-radius:50%; background:#287e68; color:#fff; font-weight:900; }
 .inventory-page .metric-card:hover { transform:translateY(-3px); border-color:color-mix(in srgb,var(--clay) 35%,var(--line)); box-shadow:0 16px 32px rgba(73,51,36,.09); }
 .inventory-page .table-wrap { border-radius:18px; }
 .inventory-page tbody tr { transition:background .16s ease; }
