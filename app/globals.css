@@ -1400,6 +1400,8 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 .member-status-list article small { color:var(--muted); font-size:11px; }
 .member-status-list article > span { color:#b76a3c; font-size:11px; font-weight:800; }
 .member-status-list article.completed > span { color:var(--success); }
+.member-complete-toggle { min-height:34px; padding:0 10px; border:1px solid #d8c8bb; border-radius:9px; background:var(--surface); color:var(--clay); font-size:10px; font-weight:800; cursor:pointer; }
+.member-complete-toggle.completed { border-color:#afd5bd; background:#edf8f0; color:var(--success); }
 .finance-page .compact-heading { margin-bottom:0; }
 .finance-page .table-wrap { overflow-x:auto; }
 .finance-page .table-wrap table { min-width:860px; }
