@@ -25,6 +25,7 @@ alter table public.products add column if not exists material_tag text not null 
 alter table public.products add column if not exists look_tag text not null default '';
 alter table public.products add column if not exists utility_tag text not null default '';
 alter table public.products add column if not exists trend_tag text not null default '';
+alter table public.products add column if not exists skin_type text not null default '';
 
 create table if not exists public.bills (
   id text primary key,
@@ -256,6 +257,34 @@ create table if not exists public.finance_controls (
   cash_in_hand double precision not null default 0,
   delivered_collection double precision not null default 0,
   pending_collection double precision not null default 0,
+  cash_in_bank double precision not null default 0,
+  deposit_amount double precision not null default 0,
+  excess_amount double precision not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.finance_controls add column if not exists cash_in_bank double precision not null default 0;
+alter table public.finance_controls add column if not exists deposit_amount double precision not null default 0;
+alter table public.finance_controls add column if not exists excess_amount double precision not null default 0;
+
+create table if not exists public.stock_entries (
+  id text primary key,
+  product_id text not null,
+  client_key text not null default 'SHF',
+  quantity integer not null default 0,
+  entry_date text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.finance_members (
+  id text primary key,
+  name text not null default '',
+  member_type text not null default 'Negotiable',
+  amount double precision not null default 0,
+  due_date text not null default '',
+  notes text not null default '',
+  status text not null default 'Pending',
+  created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 

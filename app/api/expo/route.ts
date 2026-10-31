@@ -5,13 +5,13 @@ type ProductInput = {
   id?: string; code?: string; hsnCode?: string; name?: string; category?: string;
   size?: string; woodType?: string; price?: number; stockQty?: number; mrp?: number;
   notes?: string; imageKey?: string; clientKey?: string; costSegment?: string; comfortTag?: string;
-  materialTag?: string; lookTag?: string; utilityTag?: string; trendTag?: string;
+  materialTag?: string; lookTag?: string; utilityTag?: string; trendTag?: string; skinType?: string;
 };
 
 type BillItemInput = {
   productId?: string; code?: string; hsnCode?: string; name?: string; size?: string;
   woodType?: string; price?: number; qty?: number; againstOrder?: boolean;
-  againstOrderExtra?: number; customizeDetails?: string; imageKey?: string; imageUrl?: string;
+  againstOrderExtra?: number; customizeDetails?: string; customMode?: string; imageKey?: string; imageUrl?: string;
 };
 
 type PaymentRecord = { id: string; amount: number; mode: string; note: string; date: string };
@@ -28,7 +28,8 @@ type LeadInput = { id?: string; customerName?: string; phone?: string; source?: 
 type JobCardInput = { id?: string; jobNo?: string; customerName?: string; phone?: string; billId?: string; measurements?: string; woodMaterial?: string; fabric?: string; foam?: string; polish?: string; referenceImages?: string[]; estimatedCost?: number; assignedTo?: string; expectedDate?: string; stage?: string; notes?: string };
 type FinanceCommitmentInput = { id?: string; amount?: number; payee?: string; dueDate?: string; accountHead?: string; raisedBy?: string; approvedBy?: string };
 type FinanceExpenseInput = { id?: string; amount?: number; payee?: string; automatedDate?: string; accountHead?: string; raisedBy?: string; approvedBy?: string };
-type FinanceControlsInput = { accountFund?: number; cashInHand?: number; deliveredCollection?: number; pendingCollection?: number };
+type FinanceControlsInput = { accountFund?: number; cashInHand?: number; cashInBank?: number; deliveredCollection?: number; pendingCollection?: number; depositAmount?: number; excessAmount?: number };
+type FinanceMemberInput = { id?: string; name?: string; memberType?: string; amount?: number; dueDate?: string; notes?: string; status?: string };
 
 const SAMPLE_PRODUCTS: ProductInput[] = [
   { code: "SOFA-001", hsnCode: "94016100", name: "3 Seater Fabric Sofa", category: "Sofa", size: "3 Seater", price: 55000, stockQty: 2, mrp: 65000 },
@@ -49,6 +50,17 @@ function safeJson<T>(value: unknown, fallback: T): T { try { return typeof value
 function cleanList(value: unknown, fallback: string[] = []) {
   if (!Array.isArray(value)) return fallback;
   return [...new Set(value.map((item) => clean(item)).filter(Boolean))].slice(0, 100);
+}
+function productCodePart(value: unknown, fallback: string) {
+  return clean(value, fallback).toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 4) || fallback;
+}
+async function nextProductCode(clientKey: string, category: unknown, name: unknown) {
+  const key = `product_serial_${clientKey.toUpperCase()}`;
+  await env.DB.prepare("INSERT OR IGNORE INTO counters (key,value) VALUES (?,0)").bind(key).run();
+  await env.DB.prepare("UPDATE counters SET value=value+1 WHERE key=?").bind(key).run();
+  const row = await env.DB.prepare("SELECT value FROM counters WHERE key=?").bind(key).first<{ value: number }>();
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `${date}-${productCodePart(category, "PROD")}-${productCodePart(name, "ITEM")}-${String(row?.value || Date.now()).padStart(3, "0")}`;
 }
 
 async function ensureColumn(table: "products" | "bills" | "settings" | "tasks", column: string, definition: string) {
@@ -103,7 +115,16 @@ async function ensureSchema() {
     db.prepare(`CREATE TABLE IF NOT EXISTS finance_controls (
       id INTEGER PRIMARY KEY CHECK (id=1), account_fund DOUBLE PRECISION NOT NULL DEFAULT 0,
       cash_in_hand DOUBLE PRECISION NOT NULL DEFAULT 0, delivered_collection DOUBLE PRECISION NOT NULL DEFAULT 0,
-      pending_collection DOUBLE PRECISION NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      pending_collection DOUBLE PRECISION NOT NULL DEFAULT 0, cash_in_bank DOUBLE PRECISION NOT NULL DEFAULT 0, deposit_amount DOUBLE PRECISION NOT NULL DEFAULT 0, excess_amount DOUBLE PRECISION NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS stock_entries (
+      id TEXT PRIMARY KEY, product_id TEXT NOT NULL, client_key TEXT NOT NULL DEFAULT 'SHF', quantity INTEGER NOT NULL DEFAULT 0,
+      entry_date TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_members (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', member_type TEXT NOT NULL DEFAULT 'Negotiable', amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+      due_date TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'Pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_leads_follow_up ON leads(follow_up_date)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
@@ -114,6 +135,10 @@ async function ensureSchema() {
     db.prepare("ALTER TABLE products ADD COLUMN IF NOT EXISTS look_tag TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE products ADD COLUMN IF NOT EXISTS utility_tag TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE products ADD COLUMN IF NOT EXISTS trend_tag TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE products ADD COLUMN IF NOT EXISTS skin_type TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE finance_controls ADD COLUMN IF NOT EXISTS cash_in_bank DOUBLE PRECISION NOT NULL DEFAULT 0"),
+    db.prepare("ALTER TABLE finance_controls ADD COLUMN IF NOT EXISTS deposit_amount DOUBLE PRECISION NOT NULL DEFAULT 0"),
+    db.prepare("ALTER TABLE finance_controls ADD COLUMN IF NOT EXISTS excess_amount DOUBLE PRECISION NOT NULL DEFAULT 0"),
     db.prepare("ALTER TABLE bills ADD COLUMN IF NOT EXISTS client_key TEXT NOT NULL DEFAULT 'SHF'"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_name TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_phone TEXT NOT NULL DEFAULT ''"),
@@ -204,7 +229,16 @@ async function ensureSchema() {
     db.prepare(`CREATE TABLE IF NOT EXISTS finance_controls (
       id INTEGER PRIMARY KEY CHECK (id=1), account_fund REAL NOT NULL DEFAULT 0,
       cash_in_hand REAL NOT NULL DEFAULT 0, delivered_collection REAL NOT NULL DEFAULT 0,
-      pending_collection REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      pending_collection REAL NOT NULL DEFAULT 0, cash_in_bank REAL NOT NULL DEFAULT 0, deposit_amount REAL NOT NULL DEFAULT 0, excess_amount REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS stock_entries (
+      id TEXT PRIMARY KEY, product_id TEXT NOT NULL, client_key TEXT NOT NULL DEFAULT 'SHF', quantity INTEGER NOT NULL DEFAULT 0,
+      entry_date TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS finance_members (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', member_type TEXT NOT NULL DEFAULT 'Negotiable', amount REAL NOT NULL DEFAULT 0,
+      due_date TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'Pending',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at DESC)"),
@@ -217,7 +251,7 @@ async function ensureSchema() {
     ["products", "image_key", "TEXT NOT NULL DEFAULT ''"], ["products", "client_key", "TEXT NOT NULL DEFAULT 'SHF'"],
     ["products", "cost_segment", "TEXT NOT NULL DEFAULT ''"], ["products", "comfort_tag", "TEXT NOT NULL DEFAULT ''"],
     ["products", "material_tag", "TEXT NOT NULL DEFAULT ''"], ["products", "look_tag", "TEXT NOT NULL DEFAULT ''"],
-    ["products", "utility_tag", "TEXT NOT NULL DEFAULT ''"], ["products", "trend_tag", "TEXT NOT NULL DEFAULT ''"],
+    ["products", "utility_tag", "TEXT NOT NULL DEFAULT ''"], ["products", "trend_tag", "TEXT NOT NULL DEFAULT ''"], ["products", "skin_type", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "client_request_id", "TEXT NOT NULL DEFAULT ''"],
     ["bills", "client_key", "TEXT NOT NULL DEFAULT 'SHF'"],
     ["bills", "staff_name", "TEXT NOT NULL DEFAULT ''"], ["bills", "counter_name", "TEXT NOT NULL DEFAULT ''"],
@@ -279,24 +313,24 @@ function productUpsertStatement(input: ProductInput) {
   const id = clean(input.id) || `prd-${code.toLowerCase().replace(/[^a-z0-9]+/g, "-") || crypto.randomUUID()}`;
   const clientKey = clean(input.clientKey, "SHF").toUpperCase();
   return env.DB.prepare(`INSERT INTO products
-    (id,code,client_key,hsn_code,name,category,size,wood_type,price,stock_qty,mrp,notes,image_key,cost_segment,comfort_tag,material_tag,look_tag,utility_tag,trend_tag,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+    (id,code,client_key,hsn_code,name,category,size,wood_type,price,stock_qty,mrp,notes,image_key,cost_segment,comfort_tag,material_tag,look_tag,utility_tag,trend_tag,skin_type,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
     ON CONFLICT(code) DO UPDATE SET hsn_code=excluded.hsn_code,name=excluded.name,category=excluded.category,
     client_key=excluded.client_key,size=excluded.size,wood_type=excluded.wood_type,price=excluded.price,stock_qty=excluded.stock_qty,
     mrp=excluded.mrp,notes=excluded.notes,image_key=CASE WHEN excluded.image_key<>'' THEN excluded.image_key ELSE products.image_key END,
     cost_segment=excluded.cost_segment,comfort_tag=excluded.comfort_tag,material_tag=excluded.material_tag,look_tag=excluded.look_tag,
-    utility_tag=excluded.utility_tag,trend_tag=excluded.trend_tag,
+    utility_tag=excluded.utility_tag,trend_tag=excluded.trend_tag,skin_type=excluded.skin_type,
     updated_at=CURRENT_TIMESTAMP`)
     .bind(id, code, clientKey, clean(input.hsnCode), clean(input.name), clean(input.category, "Others") || "Others", clean(input.size),
       clean(input.woodType), round2(numeric(input.price)), whole(input.stockQty), round2(numeric(input.mrp)), clean(input.notes), clean(input.imageKey),
-      clean(input.costSegment), clean(input.comfortTag), clean(input.materialTag), clean(input.lookTag), clean(input.utilityTag), clean(input.trendTag));
+      clean(input.costSegment), clean(input.comfortTag), clean(input.materialTag), clean(input.lookTag), clean(input.utilityTag), clean(input.trendTag), clean(input.skinType));
 }
 
 async function readState(scopeKey = "all") {
-  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows, leadRows, jobRows, heldRows, verificationRows, commitmentRows, expenseRows, financeControlRow] = await Promise.all([
+  const [productRows, billRows, settingRow, supplierRows, taskRows, interactionRows, assignmentRows, auditRows, leadRows, jobRows, heldRows, verificationRows, commitmentRows, expenseRows, financeControlRow, stockEntryRows, financeMemberRows] = await Promise.all([
     env.DB.prepare(`SELECT id,code,client_key AS clientKey,hsn_code AS hsnCode,name,category,size,wood_type AS woodType,price,
       stock_qty AS stockQty,mrp,notes,image_key AS imageKey,cost_segment AS costSegment,comfort_tag AS comfortTag,
-      material_tag AS materialTag,look_tag AS lookTag,utility_tag AS utilityTag,trend_tag AS trendTag,updated_at AS updatedAt FROM products ${scopeKey === "all" ? "" : "WHERE client_key=?"} ORDER BY category,name`).bind(...(scopeKey === "all" ? [] : [scopeKey])).all(),
+      material_tag AS materialTag,look_tag AS lookTag,utility_tag AS utilityTag,trend_tag AS trendTag,skin_type AS skinType,updated_at AS updatedAt FROM products ${scopeKey === "all" ? "" : "WHERE client_key=?"} ORDER BY category,name`).bind(...(scopeKey === "all" ? [] : [scopeKey])).all(),
     env.DB.prepare(`SELECT id,bill_no AS billNo,customer_name AS customerName,customer_phone AS customerPhone,
       customer_address AS customerAddress,items_json AS itemsJson,staff_name AS staffName,counter_name AS counterName,
       product_total AS productTotal,against_order_extra AS againstOrderExtra,card_charge AS cardCharge,
@@ -341,8 +375,12 @@ async function readState(scopeKey = "all") {
       FROM finance_commitments ORDER BY due_date,created_at DESC`).all(),
     env.DB.prepare(`SELECT id,amount,payee,automated_date AS automatedDate,account_head AS accountHead,raised_by AS raisedBy,approved_by AS approvedBy,created_at AS createdAt
       FROM finance_expenses ORDER BY automated_date DESC,created_at DESC`).all(),
-    env.DB.prepare(`SELECT account_fund AS accountFund,cash_in_hand AS cashInHand,delivered_collection AS deliveredCollection,pending_collection AS pendingCollection
+    env.DB.prepare(`SELECT account_fund AS accountFund,cash_in_hand AS cashInHand,cash_in_bank AS cashInBank,delivered_collection AS deliveredCollection,pending_collection AS pendingCollection,deposit_amount AS depositAmount,excess_amount AS excessAmount
       FROM finance_controls WHERE id=1`).first(),
+    env.DB.prepare(`SELECT id,product_id AS productId,client_key AS clientKey,quantity,entry_date AS entryDate,created_at AS createdAt
+      FROM stock_entries ${scopeKey === "all" ? "" : "WHERE client_key=?"} ORDER BY entry_date DESC,created_at DESC LIMIT 500`).bind(...(scopeKey === "all" ? [] : [scopeKey])).all(),
+    env.DB.prepare(`SELECT id,name,member_type AS memberType,amount,due_date AS dueDate,notes,status,created_at AS createdAt,updated_at AS updatedAt
+      FROM finance_members ORDER BY CASE status WHEN 'Completed' THEN 1 ELSE 0 END,due_date,created_at DESC`).all(),
   ]);
   const products = productRows.results.map((row: Record<string, unknown>) => ({ ...row, imageUrl: row.imageKey ? `/api/images/${encodeURIComponent(String(row.imageKey))}` : "" }));
   const gstRate = Number((settingRow as Record<string, unknown> | null)?.gstRate ?? 18);
@@ -380,11 +418,14 @@ async function readState(scopeKey = "all") {
     counterNamesJson: undefined,
   } : null;
   const financeControls = scopeKey === "all" ? {
-    accountFund: numeric((financeControlRow as Record<string, unknown> | null)?.accountFund),
+      accountFund: numeric((financeControlRow as Record<string, unknown> | null)?.accountFund),
     cashInHand: numeric((financeControlRow as Record<string, unknown> | null)?.cashInHand),
+      cashInBank: numeric((financeControlRow as Record<string, unknown> | null)?.cashInBank),
     deliveredCollection: numeric((financeControlRow as Record<string, unknown> | null)?.deliveredCollection),
     pendingCollection: numeric((financeControlRow as Record<string, unknown> | null)?.pendingCollection),
-  } : { accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 };
+      depositAmount: numeric((financeControlRow as Record<string, unknown> | null)?.depositAmount),
+      excessAmount: numeric((financeControlRow as Record<string, unknown> | null)?.excessAmount),
+  } : { accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 };
   return {
     products,
     bills,
@@ -401,6 +442,8 @@ async function readState(scopeKey = "all") {
     financeCommitments: scopeKey === "all" ? commitmentRows.results : [],
     financeExpenses: scopeKey === "all" ? expenseRows.results : [],
     financeControls,
+    stockEntries: stockEntryRows.results,
+    financeMembers: scopeKey === "all" ? financeMemberRows.results : [],
     syncedAt: new Date().toISOString(),
   };
 }
@@ -462,7 +505,7 @@ export async function POST(request: Request) {
     if (["resetDemoWorkspace", "saveSettings"].includes(action) && user.role !== "md") {
       return Response.json({ error: "Only Managing Director can change showroom-wide settings." }, { status: 403 });
     }
-    if (["saveFinanceControls", "saveCommitment", "deleteCommitment", "saveExpense", "deleteExpense"].includes(action) && user.role !== "md") {
+    if (["saveFinanceControls", "saveCommitment", "deleteCommitment", "saveExpense", "deleteExpense", "saveFinanceMember", "deleteFinanceMember"].includes(action) && user.role !== "md") {
       return Response.json({ error: "Only Managing Director can manage finance records." }, { status: 403 });
     }
 
@@ -499,10 +542,10 @@ export async function POST(request: Request) {
       ]);
     } else if (action === "saveFinanceControls") {
       const controls = (payload.controls || {}) as FinanceControlsInput;
-      await env.DB.prepare(`INSERT INTO finance_controls (id,account_fund,cash_in_hand,delivered_collection,pending_collection)
-        VALUES (1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_fund=excluded.account_fund,cash_in_hand=excluded.cash_in_hand,
-        delivered_collection=excluded.delivered_collection,pending_collection=excluded.pending_collection,updated_at=CURRENT_TIMESTAMP`)
-        .bind(round2(numeric(controls.accountFund)), round2(numeric(controls.cashInHand)), round2(numeric(controls.deliveredCollection)), round2(numeric(controls.pendingCollection))).run();
+      await env.DB.prepare(`INSERT INTO finance_controls (id,account_fund,cash_in_hand,cash_in_bank,delivered_collection,pending_collection,deposit_amount,excess_amount)
+        VALUES (1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_fund=excluded.account_fund,cash_in_hand=excluded.cash_in_hand,cash_in_bank=excluded.cash_in_bank,
+        delivered_collection=excluded.delivered_collection,pending_collection=excluded.pending_collection,deposit_amount=excluded.deposit_amount,excess_amount=excluded.excess_amount,updated_at=CURRENT_TIMESTAMP`)
+        .bind(round2(numeric(controls.accountFund)), round2(numeric(controls.cashInHand)), round2(numeric(controls.cashInBank)), round2(numeric(controls.deliveredCollection)), round2(numeric(controls.pendingCollection)), round2(numeric(controls.depositAmount)), round2(numeric(controls.excessAmount))).run();
     } else if (action === "saveCommitment") {
       const value = (payload.commitment || {}) as FinanceCommitmentInput;
       const payee = clean(value.payee);
@@ -527,8 +570,22 @@ export async function POST(request: Request) {
         .bind(id, amount, payee, clean(value.automatedDate) || new Date().toISOString().slice(0, 10), clean(value.accountHead), clean(value.raisedBy), clean(value.approvedBy)).run();
     } else if (action === "deleteExpense") {
       await env.DB.prepare("DELETE FROM finance_expenses WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "saveFinanceMember") {
+      const value = (payload.member || {}) as FinanceMemberInput;
+      const name = clean(value.name);
+      if (!name) return Response.json({ error: "Member name is required." }, { status: 400 });
+      const id = clean(value.id) || uid("member");
+      const memberType = clean(value.memberType, "Negotiable") === "Non-Negotiable" ? "Non-Negotiable" : "Negotiable";
+      await env.DB.prepare(`INSERT INTO finance_members (id,name,member_type,amount,due_date,notes,status)
+        VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,member_type=excluded.member_type,amount=excluded.amount,
+        due_date=excluded.due_date,notes=excluded.notes,status=excluded.status,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id, name, memberType, round2(numeric(value.amount)), clean(value.dueDate), clean(value.notes), clean(value.status, "Pending")).run();
+    } else if (action === "deleteFinanceMember") {
+      await env.DB.prepare("DELETE FROM finance_members WHERE id=?").bind(clean(payload.id)).run();
     } else if (action === "saveProduct") {
-      const product = { ...(payload.product as ProductInput), clientKey: user.role === "client" ? user.clientKey : clean((payload.product as ProductInput)?.clientKey, "SHF") };
+      const incoming = payload.product as ProductInput;
+      const clientKey = user.role === "client" ? user.clientKey : clean(incoming?.clientKey, "SHF").toUpperCase();
+      const product = { ...incoming, clientKey, code: clean(incoming?.code) || await nextProductCode(clientKey, incoming?.category, incoming?.name) };
       if (!clean(product?.code) || !clean(product?.name) || numeric(product?.price) <= 0) {
         return Response.json({ error: "Product code, name and showroom price are required." }, { status: 400 });
       }
@@ -560,6 +617,7 @@ export async function POST(request: Request) {
       const params = user.role === "client" ? [delta, id, user.clientKey] : [delta, id];
       const result = await env.DB.prepare(`UPDATE products SET stock_qty=MAX(0,stock_qty+?),updated_at=CURRENT_TIMESTAMP WHERE id=?${scope}`).bind(...params).run();
       if (!result.meta.changes) return Response.json({ error: "Product was not found." }, { status: 404 });
+      if (delta > 0) await env.DB.prepare(`INSERT INTO stock_entries (id,product_id,client_key,quantity,entry_date) SELECT ?,id,client_key,?,? FROM products WHERE id=?${scope}`).bind(uid("stock"), delta, clean(payload.entryDate, new Date().toISOString().slice(0, 10)), id, ...(user.role === "client" ? [user.clientKey] : [])).run();
     } else if (action === "createBill") {
       if (user.role === "md") return Response.json({ error: "Managing Director login is view-only. Use a showroom login to create a new order." }, { status: 403 });
       const bill = payload.bill as Record<string, unknown>;
@@ -577,6 +635,7 @@ export async function POST(request: Request) {
         orderType: item.againstOrder ? "Against Order" : "Stock",
         againstOrderExtra: item.againstOrder ? round2(numeric(item.againstOrderExtra)) : 0,
         customizeDetails: item.againstOrder ? clean(item.customizeDetails) : "",
+        customMode: item.againstOrder ? clean(item.customMode) : "",
         imageKey: clean(item.imageKey), imageUrl: clean(item.imageUrl),
       })).filter((item) => item.productId && item.name && item.price >= 0);
       if (!items.length) return Response.json({ error: "Add at least one product." }, { status: 400 });
@@ -724,7 +783,7 @@ export async function POST(request: Request) {
         name: clean(item.name), size: clean(item.size), woodType: clean(item.woodType), price: round2(numeric(item.price)),
         qty: Math.max(1, whole(item.qty, 1)), againstOrder: Boolean(item.againstOrder),
         againstOrderExtra: item.againstOrder ? round2(numeric(item.againstOrderExtra)) : 0,
-        customizeDetails: clean(item.customizeDetails),
+        customizeDetails: clean(item.customizeDetails), customMode: clean(item.customMode),
         imageKey: clean(item.imageKey), imageUrl: clean(item.imageUrl),
       })).filter((item) => item.name && item.productId);
       if (!items.length) return Response.json({ error: "Keep at least one valid product in the order." }, { status: 400 });

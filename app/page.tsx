@@ -45,12 +45,14 @@ type Product = {
   lookTag: string;
   utilityTag: string;
   trendTag: string;
+  skinType: string;
 };
 type CartItem = Product & {
   qty: number;
   againstOrder: boolean;
   againstOrderExtra: number;
   customizeDetails: string;
+  customMode?: "Customization" | "Personalization";
 };
 type PaymentRecord = {
   id: string;
@@ -74,6 +76,7 @@ type BillItem = {
   customizeDetails?: string;
   imageKey?: string;
   imageUrl?: string;
+  customMode?: "Customization" | "Personalization";
 };
 type Bill = {
   id: string;
@@ -161,6 +164,7 @@ type StockVerification = {
   lines: Array<{ productId: string; code: string; name: string; systemQty: number; countedQty: number }>;
   createdAt: string;
 };
+type StockEntry = { id: string; productId: string; clientKey: string; quantity: number; entryDate: string; createdAt: string };
 type FinanceCommitment = {
   id: string; amount: number; payee: string; dueDate: string; accountHead: string;
   raisedBy: string; approvedBy: string; createdAt: string;
@@ -170,8 +174,9 @@ type FinanceExpense = {
   raisedBy: string; approvedBy: string; createdAt: string;
 };
 type FinanceControls = {
-  accountFund: number; cashInHand: number; deliveredCollection: number; pendingCollection: number;
+  accountFund: number; cashInHand: number; cashInBank: number; deliveredCollection: number; pendingCollection: number; depositAmount: number; excessAmount: number;
 };
+type FinanceMember = { id: string; name: string; memberType: "Negotiable" | "Non-Negotiable"; amount: number; dueDate: string; notes: string; status: string; createdAt: string; updatedAt: string };
 type BillingDraft = {
   cart: CartItem[];
   customer: {
@@ -208,9 +213,11 @@ type ExpoState = {
   jobCards: JobCard[];
   heldOrders: HeldOrder[];
   stockVerifications: StockVerification[];
+  stockEntries: StockEntry[];
   financeCommitments: FinanceCommitment[];
   financeExpenses: FinanceExpense[];
   financeControls: FinanceControls;
+  financeMembers: FinanceMember[];
   syncedAt: string;
 };
 type ReportData = {
@@ -259,6 +266,7 @@ const EMPTY_PRODUCT = {
   lookTag: "",
   utilityTag: "",
   trendTag: "",
+  skinType: "",
 };
 const DEFAULT_SETTINGS: ExpoSettings = {
   businessName: "Smaarthome Furniture",
@@ -351,6 +359,10 @@ function printSafe(value: unknown) {
 }
 function isoDate(value = new Date()) {
   return value.toISOString().slice(0, 10);
+}
+function displayEntryDate(value: string) {
+  const parts = value.split("-");
+  return parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : value;
 }
 function productTone(product: { code: string }) {
   const seed = [...product.code].reduce(
@@ -453,9 +465,11 @@ export default function Home() {
     jobCards: [],
     heldOrders: [],
     stockVerifications: [],
+    stockEntries: [],
     financeCommitments: [],
     financeExpenses: [],
-    financeControls: { accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 },
+    financeControls: { accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 },
+    financeMembers: [],
     syncedAt: "",
   });
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -470,10 +484,10 @@ export default function Home() {
   const [productImagePreview, setProductImagePreview] = useState("");
   const [showProductForm, setShowProductForm] = useState(false);
   const [showCustomProduct, setShowCustomProduct] = useState(false);
-  const [customProductForm, setCustomProductForm] = useState({ name: "", size: "", woodType: "", price: 0, qty: 1, details: "" });
+  const [customProductForm, setCustomProductForm] = useState({ name: "", size: "", woodType: "", price: 0, qty: 1, details: "", mode: "Customization" as "Customization" | "Personalization" });
   const [customProductImageFile, setCustomProductImageFile] = useState<File | null>(null);
   const [customProductImagePreview, setCustomProductImagePreview] = useState("");
-  const [stockEntry, setStockEntry] = useState<{ product: Product | null; quantity: number }>({ product: null, quantity: 1 });
+  const [stockEntry, setStockEntry] = useState<{ product: Product | null; quantity: number; entryDate: string }>({ product: null, quantity: 1, entryDate: isoDate() });
   const [customer, setCustomer] = useState({
     name: "",
     phone: "",
@@ -550,10 +564,12 @@ export default function Home() {
   const [deliveryMonth, setDeliveryMonth] = useState(() => isoDate().slice(0, 7));
   const [restoredOffline, setRestoredOffline] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
-  const [financeTab, setFinanceTab] = useState<"overview" | "commitments" | "expenses" | "bills">("overview");
+  const [financeTab, setFinanceTab] = useState<"overview" | "commitments" | "expenses" | "bills" | "members">("overview");
   const [commitmentForm, setCommitmentForm] = useState<Partial<FinanceCommitment>>({ dueDate: isoDate(), amount: 0 });
   const [expenseForm, setExpenseForm] = useState<Partial<FinanceExpense>>({ automatedDate: isoDate(), amount: 0 });
-  const [financeControlsForm, setFinanceControlsForm] = useState<FinanceControls>({ accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 });
+  const [financeControlsForm, setFinanceControlsForm] = useState<FinanceControls>({ accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 });
+  const [financeMemberForm, setFinanceMemberForm] = useState<Partial<FinanceMember>>({ memberType: "Negotiable", status: "Pending", dueDate: isoDate() });
+  const [financeMemberTab, setFinanceMemberTab] = useState<"Negotiable" | "Non-Negotiable" | "Overview">("Overview");
   const [showCommitmentForm, setShowCommitmentForm] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
@@ -673,7 +689,7 @@ export default function Home() {
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
-    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, suppliers: [], tasks: [], interactions: [], supplierAssignments: [], auditLogs: [], leads: [], jobCards: [], heldOrders: [], stockVerifications: [], financeCommitments: [], financeExpenses: [], financeControls: { accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 }, syncedAt: "" });
+    setState({ products: [], bills: [], settings: DEFAULT_SETTINGS, suppliers: [], tasks: [], interactions: [], supplierAssignments: [], auditLogs: [], leads: [], jobCards: [], heldOrders: [], stockVerifications: [], stockEntries: [], financeCommitments: [], financeExpenses: [], financeControls: { accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 }, financeMembers: [], syncedAt: "" });
     setCart([]);
     setCurrentUser(null);
     window.localStorage.removeItem("smaarthome-offline-session");
@@ -702,7 +718,7 @@ export default function Home() {
         window.localStorage.setItem("smaarthome-offline-state", JSON.stringify(data));
         setRestoredOffline(false);
         setSettingsForm(data.settings || DEFAULT_SETTINGS);
-        setFinanceControlsForm(data.financeControls || { accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 });
+        setFinanceControlsForm(data.financeControls || { accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 });
         setStaffText((data.settings?.staffNames || []).join(", "));
         setCounterText(
           (data.settings?.counterNames || ["Counter 1"]).join(", "),
@@ -719,7 +735,7 @@ export default function Home() {
         if (cached) {
           try {
             const restored = JSON.parse(cached) as ExpoState;
-            setState({ ...restored, auditLogs: restored.auditLogs || [], leads: restored.leads || [], jobCards: restored.jobCards || [], heldOrders: restored.heldOrders || [], stockVerifications: restored.stockVerifications || [], financeCommitments: restored.financeCommitments || [], financeExpenses: restored.financeExpenses || [], financeControls: restored.financeControls || { accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 } });
+            setState({ ...restored, auditLogs: restored.auditLogs || [], leads: restored.leads || [], jobCards: restored.jobCards || [], heldOrders: restored.heldOrders || [], stockVerifications: restored.stockVerifications || [], stockEntries: restored.stockEntries || [], financeCommitments: restored.financeCommitments || [], financeExpenses: restored.financeExpenses || [], financeMembers: restored.financeMembers || [], financeControls: restored.financeControls || { accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 } });
             setRestoredOffline(true);
           } catch {
             window.localStorage.removeItem("smaarthome-offline-state");
@@ -820,7 +836,7 @@ export default function Home() {
       window.localStorage.setItem("smaarthome-offline-state", JSON.stringify(data));
       setRestoredOffline(false);
       setSettingsForm(data.settings || DEFAULT_SETTINGS);
-      setFinanceControlsForm(data.financeControls || { accountFund: 0, cashInHand: 0, deliveredCollection: 0, pendingCollection: 0 });
+      setFinanceControlsForm(data.financeControls || { accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 });
       setOnline(true);
       if (persistError) setSaveError("");
       notify(success);
@@ -862,18 +878,18 @@ export default function Home() {
 
   async function adjustStock(product: Product, delta: number) {
     if (delta < 0 && product.stockQty <= 0) return;
-    await mutate({ action: "adjustStock", id: product.id, delta }, `${product.code} stock ${delta > 0 ? "added" : "reduced"}.`);
+    await mutate({ action: "adjustStock", id: product.id, delta, entryDate: isoDate() }, `${product.code} stock ${delta > 0 ? "added" : "reduced"}.`);
   }
 
   function stockIn(product: Product) {
-    setStockEntry({ product, quantity: 1 });
+    setStockEntry({ product, quantity: 1, entryDate: isoDate() });
   }
 
   async function saveStockEntry(event: FormEvent) {
     event.preventDefault();
     if (!stockEntry.product || stockEntry.quantity <= 0) return notify("Enter a valid stock quantity above zero.");
-    await adjustStock(stockEntry.product, Math.floor(stockEntry.quantity));
-    setStockEntry({ product: null, quantity: 1 });
+    await mutate({ action: "adjustStock", id: stockEntry.product.id, delta: Math.floor(stockEntry.quantity), entryDate: stockEntry.entryDate }, `${stockEntry.product.code} stock received and dated.`);
+    setStockEntry({ product: null, quantity: 1, entryDate: isoDate() });
   }
   const filteredBills = useMemo(() => {
     const query = billSearch.toLowerCase().trim();
@@ -895,7 +911,7 @@ export default function Home() {
   );
   const financeCommitmentTotal = state.financeCommitments.reduce((sum, item) => sum + item.amount, 0);
   const financeExpenseTotal = state.financeExpenses.reduce((sum, item) => sum + item.amount, 0);
-  const financeAvailableTotal = (financeControlsForm.accountFund || 0) + (financeControlsForm.cashInHand || 0);
+  const financeAvailableTotal = (financeControlsForm.accountFund || 0) + (financeControlsForm.cashInHand || 0) + (financeControlsForm.cashInBank || 0);
   const financePotentialTotal = (financeControlsForm.deliveredCollection || 0) + (financeControlsForm.pendingCollection || 0);
   const financeExcessDeficit = financeCommitmentTotal - (financeAvailableTotal + financePotentialTotal);
   const draftBillPrefix = currentUser?.role === "client"
@@ -1660,10 +1676,20 @@ export default function Home() {
     const data = await mutate({ action: "saveExpense", expense: expenseForm }, expenseForm.id ? "Expense updated." : "Expense added.");
     if (data) { setExpenseForm({ automatedDate: isoDate(), amount: 0 }); setShowExpenseForm(false); }
   }
+  async function saveFinanceMember(event: FormEvent) {
+    event.preventDefault();
+    if (!financeMemberForm.name?.trim()) return notify("Member name is required.");
+    const data = await mutate({ action: "saveFinanceMember", member: financeMemberForm }, financeMemberForm.id ? "Member item updated." : "Member item added.");
+    if (data) setFinanceMemberForm({ memberType: "Negotiable", status: "Pending", dueDate: isoDate() });
+  }
 
   async function deleteFinanceRow(action: "deleteCommitment" | "deleteExpense", id: string) {
     if (!window.confirm("Remove this finance record?")) return;
     await mutate({ action, id }, action === "deleteCommitment" ? "Commitment removed." : "Expense removed.");
+  }
+  async function deleteFinanceMember(id: string) {
+    if (!window.confirm("Remove this member item?")) return;
+    await mutate({ action: "deleteFinanceMember", id }, "Member item removed.");
   }
 
   async function saveSupplier(event: FormEvent) {
@@ -2013,10 +2039,10 @@ export default function Home() {
     }
     const code = `CUSTOM-${Date.now().toString(36).toUpperCase()}`;
     const custom: CartItem = {
-      id: `custom-${crypto.randomUUID()}`, code, hsnCode: "", name, category: "Custom Made", size: customProductForm.size.trim(), woodType: customProductForm.woodType.trim(), price: Math.max(0, customProductForm.price), stockQty: 0, mrp: customProductForm.price, notes: customProductForm.details.trim(), imageKey: uploadedImage.key, imageUrl: uploadedImage.url, costSegment: "", comfortTag: "", materialTag: "", lookTag: "", utilityTag: "", trendTag: "", qty: Math.max(1, Math.floor(customProductForm.qty || 1)), againstOrder: true, againstOrderExtra: 0, customizeDetails: customProductForm.details.trim(),
+      id: `custom-${crypto.randomUUID()}`, code, hsnCode: "", name, category: "Custom Made", size: customProductForm.size.trim(), woodType: customProductForm.woodType.trim(), price: Math.max(0, customProductForm.price), stockQty: 0, mrp: customProductForm.price, notes: customProductForm.details.trim(), imageKey: uploadedImage.key, imageUrl: uploadedImage.url, costSegment: "", comfortTag: "", materialTag: "", lookTag: "", utilityTag: "", trendTag: "", skinType: "", qty: Math.max(1, Math.floor(customProductForm.qty || 1)), againstOrder: true, againstOrderExtra: 0, customMode: customProductForm.mode, customizeDetails: `${customProductForm.mode}: ${customProductForm.details.trim()}`,
     };
     setCart((items) => [...items, custom]);
-    setCustomProductForm({ name: "", size: "", woodType: "", price: 0, qty: 1, details: "" });
+    setCustomProductForm({ name: "", size: "", woodType: "", price: 0, qty: 1, details: "", mode: "Customization" });
     setCustomProductImageFile(null);
     setCustomProductImagePreview("");
     setShowCustomProduct(false);
@@ -2187,7 +2213,7 @@ export default function Home() {
             active={active === "finance"}
             onClick={() => { setFinanceTab("overview"); setActive("finance"); }}
             icon="₹"
-            label="Finance & MD"
+            label="MD Metrics"
           />}
           <Nav
             active={active === "settings"}
@@ -2266,7 +2292,7 @@ export default function Home() {
               ["reports", "▤", "Reports", "Sales, staff work and downloadable reports"],
               ["settings", "⚙", "Settings", "Business, GST and staff setup"],
             ] as const).map(([page, icon, label, note]) => <button key={page} onClick={() => { setActive(page); setMobileMoreOpen(false); }}><span>{icon}</span><div><strong>{label}</strong><small>{note}</small></div><b>›</b></button>)}
-            {currentUser?.role === "md" && <button onClick={() => { setFinanceTab("overview"); setActive("finance"); setMobileMoreOpen(false); }}><span>₹</span><div><strong>Finance & MD</strong><small>Commitments, funds and bill balances</small></div><b>›</b></button>}
+            {currentUser?.role === "md" && <button onClick={() => { setFinanceTab("overview"); setActive("finance"); setMobileMoreOpen(false); }}><span>₹</span><div><strong>MD Metrics</strong><small>Commitments, funds and bill balances</small></div><b>›</b></button>}
             <div className="mobile-theme-picker"><strong>Colour theme</strong><div>{themes.map((item) => <button className={theme === item.id ? "active" : ""} key={item.id} onClick={() => changeTheme(item.id)}><span>{item.colors.map((color) => <i key={color} style={{ background: color }} />)}</span>{item.label}</button>)}</div></div>
             <div className="mobile-density-picker"><strong>Display spacing</strong><div><button className={density === "comfortable" ? "active" : ""} onClick={() => changeDensity("comfortable")}>Comfortable</button><button className={density === "compact" ? "active" : ""} onClick={() => changeDensity("compact")}>Compact</button></div></div>
           </div>
@@ -2961,7 +2987,7 @@ export default function Home() {
                         <span className="soft-tag">{product.category}</span>
                       </td>
                       <td>
-                        {[product.size, product.woodType]
+                        {[product.size, product.woodType, product.skinType]
                           .filter(Boolean)
                           .join(" · ") || "—"}
                         {(product.costSegment || product.comfortTag || product.materialTag || product.lookTag || product.utilityTag || product.trendTag) && <div className="product-tag-list">{[product.costSegment, product.comfortTag, product.materialTag, product.lookTag, product.utilityTag, product.trendTag].filter(Boolean).map((tag) => <span className="soft-tag" key={tag}>{tag}</span>)}</div>}
@@ -3009,6 +3035,7 @@ export default function Home() {
                 </tbody>
               </table>
             </div>
+            {state.stockEntries.length > 0 && <section className="stock-history-card"><div className="card-heading"><div><span className="eyebrow">Stock history</span><h2>Latest stock entries</h2></div><span className="soft-tag">Newest first</span></div><div className="stock-history-list">{state.stockEntries.slice(0, 8).map((entry) => { const product = state.products.find((item) => item.id === entry.productId); return <div key={entry.id}><span className="stock-history-icon">＋</span><div><strong>{product?.name || entry.productId}</strong><small>{product?.code || ""} · {entry.entryDate ? displayEntryDate(entry.entryDate) : "Date not set"}</small></div><b>+{entry.quantity}</b></div>; })}</div></section>}
           </section>
         )}
 
@@ -3470,9 +3497,9 @@ export default function Home() {
           <section className="page-section finance-page">
             <div className="section-heading">
               <div>
-                <span className="eyebrow">Managing Director · Finance</span>
-                <h1>Commitments, collections & bill balances.</h1>
-                <p>Workbook-style finance controls for all showroom desks. Only the MD account can view or edit this tab.</p>
+                <span className="eyebrow">Managing Director · MD Metrics</span>
+                <h1>Financial monitoring, clearly organised.</h1>
+                <p>Commitments, available funds, expected collections, deposits and pending member work in one MD-only view.</p>
               </div>
               <div className="heading-actions"><button className="secondary-action" onClick={() => setShowCommitmentForm(true)}>＋ Commitment</button><button className="primary-small" onClick={() => setShowExpenseForm(true)}>＋ Expense</button></div>
             </div>
@@ -3484,7 +3511,7 @@ export default function Home() {
               <Metric label="Excess / deficit" value={money(Math.abs(financeExcessDeficit))} note={financeExcessDeficit < 0 ? "Deficit against commitments" : "Excess after commitments"} />
             </div>
             <div className="finance-tabs" role="tablist" aria-label="Finance views">
-              {([['overview', 'Overview'], ['commitments', 'Commitments log'], ['expenses', 'Expenses log'], ['bills', 'Bill balances']] as const).map(([key, label]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => setFinanceTab(key)}>{label}</button>)}
+              {([['overview', 'Financial overview'], ['commitments', 'Commitment log'], ['expenses', 'Expense log'], ['bills', 'Bill balance details'], ['members', 'Member login']] as const).map(([key, label]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => setFinanceTab(key)}>{label}</button>)}
             </div>
             {financeTab === "overview" && <div className="finance-tab-panel">
               <div className="section-heading compact-heading"><div><span className="eyebrow">Control totals</span><h2>Keep the daily fund picture current.</h2><p>These four values mirror the MD metrics workbook and are editable by the MD.</p></div></div>
@@ -3492,16 +3519,26 @@ export default function Home() {
                 <div className="form-grid">
                   <label>Account fund<input type="number" min="0" step="0.01" value={financeControlsForm.accountFund} onChange={(event) => setFinanceControlsForm({ ...financeControlsForm, accountFund: Number(event.target.value) || 0 })} /></label>
                   <label>Cash in hand<input type="number" min="0" step="0.01" value={financeControlsForm.cashInHand} onChange={(event) => setFinanceControlsForm({ ...financeControlsForm, cashInHand: Number(event.target.value) || 0 })} /></label>
+                  <label>Cash in bank<input type="number" min="0" step="0.01" value={financeControlsForm.cashInBank} onChange={(event) => setFinanceControlsForm({ ...financeControlsForm, cashInBank: Number(event.target.value) || 0 })} /></label>
                   <label>Delivered collection<input type="number" min="0" step="0.01" value={financeControlsForm.deliveredCollection} onChange={(event) => setFinanceControlsForm({ ...financeControlsForm, deliveredCollection: Number(event.target.value) || 0 })} /></label>
                   <label>Yet to be delivered<input type="number" min="0" step="0.01" value={financeControlsForm.pendingCollection} onChange={(event) => setFinanceControlsForm({ ...financeControlsForm, pendingCollection: Number(event.target.value) || 0 })} /></label>
+                  <label>Deposit amount<input type="number" min="0" step="0.01" value={financeControlsForm.depositAmount} onChange={(event) => setFinanceControlsForm({ ...financeControlsForm, depositAmount: Number(event.target.value) || 0 })} /></label>
+                  <label>Excess amount<input type="number" min="0" step="0.01" value={financeControlsForm.excessAmount} onChange={(event) => setFinanceControlsForm({ ...financeControlsForm, excessAmount: Number(event.target.value) || 0 })} /></label>
                 </div>
                 <div className="form-actions"><button className="primary-small" type="submit">Save finance controls</button></div>
               </form>
               <div className="finance-note"><strong>Automatic bill tracker</strong><span>Bill balances below are calculated from saved orders. New bills, payments, delivery status and job cards stay linked automatically.</span></div>
+              <div className="finance-expand-grid">
+                <details open><summary><span>Financial commitments</span><b>{money(financeCommitmentTotal)}</b></summary><p>{state.financeCommitments.length} commitment(s) recorded. Open Commitment log to add weekly entries.</p></details>
+                <details><summary><span>Fund available</span><b>{money(financeAvailableTotal)}</b></summary><p>Cash in hand: {money(financeControlsForm.cashInHand)} · Cash in bank: {money(financeControlsForm.cashInBank)} · Account fund: {money(financeControlsForm.accountFund)}</p></details>
+                <details><summary><span>Fund potentials</span><b>{money(financePotentialTotal)}</b></summary><p>A to B collected: {money(financeControlsForm.deliveredCollection)} · A to B deliver: {money(financeControlsForm.pendingCollection)}. Bill Balance Details shows the source bills.</p></details>
+                <details><summary><span>Deposit & excess</span><b>{money(financeControlsForm.depositAmount + financeControlsForm.excessAmount)}</b></summary><p>Deposit: {money(financeControlsForm.depositAmount)} · Excess: {money(financeControlsForm.excessAmount)}.</p></details>
+              </div>
             </div>}
             {financeTab === "commitments" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Commitment log</span><h2>Upcoming amounts to pay.</h2></div><button className="primary-small" onClick={() => setShowCommitmentForm(true)}>＋ Add commitment</button></div><div className="table-wrap"><table><thead><tr><th>Amount</th><th>To</th><th>Due</th><th>Account head</th><th>Raised by</th><th>Approved by</th><th></th></tr></thead><tbody>{state.financeCommitments.map((row) => <tr key={row.id}><td>{money(row.amount)}</td><td>{row.payee}</td><td>{row.dueDate || "—"}</td><td>{row.accountHead || "—"}</td><td>{row.raisedBy || "—"}</td><td>{row.approvedBy || "—"}</td><td><button className="table-action danger" onClick={() => deleteFinanceRow("deleteCommitment", row.id)}>Remove</button></td></tr>)}{!state.financeCommitments.length && <tr><td colSpan={7}><div className="today-empty">No commitments entered yet.</div></td></tr>}</tbody></table></div></div>}
             {financeTab === "expenses" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Expenses log</span><h2>Recorded showroom expenses.</h2></div><button className="primary-small" onClick={() => setShowExpenseForm(true)}>＋ Add expense</button></div><div className="table-wrap"><table><thead><tr><th>Amount</th><th>To</th><th>Automated date</th><th>Account head</th><th>Raised by</th><th>Approved by</th><th></th></tr></thead><tbody>{state.financeExpenses.map((row) => <tr key={row.id}><td>{money(row.amount)}</td><td>{row.payee}</td><td>{row.automatedDate || "—"}</td><td>{row.accountHead || "—"}</td><td>{row.raisedBy || "—"}</td><td>{row.approvedBy || "—"}</td><td><button className="table-action danger" onClick={() => deleteFinanceRow("deleteExpense", row.id)}>Remove</button></td></tr>)}{!state.financeExpenses.length && <tr><td colSpan={7}><div className="today-empty">No expenses entered yet.</div></td></tr>}</tbody></table></div></div>}
             {financeTab === "bills" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Bill balances & delivery</span><h2>Collection potential by order.</h2><p>Cancelled bills are excluded from this tracker.</p></div></div><div className="table-wrap"><table><thead><tr><th>Bill no.</th><th>Job card</th><th>Products</th><th>Qty</th><th>Value</th><th>Balance</th><th>Potential</th><th>Delivery</th><th>Contact</th></tr></thead><tbody>{activeBills.map((bill) => { const value = bill.productTotal + bill.againstOrderExtra; const jobs = state.jobCards.filter((job) => job.billId === bill.id).map((job) => job.jobNo).join(", "); return <tr key={bill.id}><td><strong>{bill.billNo}</strong></td><td>{jobs || "—"}</td><td>{bill.items.map((item) => item.name).join(", ") || "—"}</td><td>{bill.items.reduce((sum, item) => sum + item.qty, 0)}</td><td>{money(value)}</td><td>{money(bill.balanceAmount)}</td><td>{value > 0 ? `${Math.round((bill.balanceAmount / value) * 100)}%` : "0%"}</td><td>{bill.deliveryDate || "Not set"}</td><td>{bill.customerPhone || "—"}</td></tr>; })}{!activeBills.length && <tr><td colSpan={9}><div className="today-empty">Saved bills will appear here automatically.</div></td></tr>}</tbody></table></div></div>}
+            {financeTab === "members" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Member login checklist</span><h2>Negotiable, non-negotiable & overview.</h2><p>Tick completed financial items; pending items remain visible in Overview.</p></div></div><div className="finance-tabs member-tabs">{(["Negotiable", "Non-Negotiable", "Overview"] as const).map((tab) => <button key={tab} className={financeMemberTab === tab ? "active" : ""} onClick={() => setFinanceMemberTab(tab)}>{tab}</button>)}</div><form className="settings-card finance-control-card" onSubmit={saveFinanceMember}><div className="form-grid"><label>Member / item name<input value={financeMemberForm.name || ""} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, name: event.target.value })} required /></label><label>Type<select value={financeMemberForm.memberType || "Negotiable"} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, memberType: event.target.value as FinanceMember["memberType"] })}><option>Negotiable</option><option>Non-Negotiable</option></select></label><label>Amount<input type="number" min="0" step="0.01" value={financeMemberForm.amount || ""} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, amount: Number(event.target.value) || 0 })} /></label><label>Due date<input type="date" value={financeMemberForm.dueDate || isoDate()} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, dueDate: event.target.value })} /></label><label>Status<select value={financeMemberForm.status || "Pending"} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, status: event.target.value })}><option>Pending</option><option>Completed</option></select></label><label className="wide">Notes<textarea rows={2} value={financeMemberForm.notes || ""} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, notes: event.target.value })} /></label></div><div className="form-actions"><button className="primary-small">Save member item</button></div></form><div className="member-status-list">{state.financeMembers.filter((item) => financeMemberTab === "Overview" || item.memberType === financeMemberTab).map((item) => <article key={item.id} className={item.status === "Completed" ? "completed" : "pending"}><div><strong>{item.name}</strong><small>{item.memberType} · {item.dueDate || "No due date"} · {money(item.amount)}</small>{item.notes && <small>{item.notes}</small>}</div><span>{item.status === "Completed" ? "✓ Completed" : "● Pending"}</span><button className="danger-link" onClick={() => deleteFinanceMember(item.id)}>Remove</button></article>)}{!state.financeMembers.filter((item) => financeMemberTab === "Overview" || item.memberType === financeMemberTab).length && <div className="today-empty">No member items in this view.</div>}</div></div>}
           </section>
         )}
 
@@ -3717,11 +3754,12 @@ export default function Home() {
       {stockEntry.product && (
         <div className="modal-backdrop">
           <form className="modal-card stock-entry-modal" onSubmit={saveStockEntry}>
-            <div className="modal-head"><div><span className="eyebrow">Quick inventory</span><h2>Receive stock</h2></div><button type="button" onClick={() => setStockEntry({ product: null, quantity: 1 })}>×</button></div>
+            <div className="modal-head"><div><span className="eyebrow">Quick inventory</span><h2>Receive stock</h2></div><button type="button" onClick={() => setStockEntry({ product: null, quantity: 1, entryDate: isoDate() })}>×</button></div>
             <div className="stock-entry-product"><ProductThumb product={stockEntry.product} /><div><strong>{stockEntry.product.name}</strong><small>{stockEntry.product.code} · Current stock {stockEntry.product.stockQty}</small></div></div>
             <label className="stock-entry-field">Pieces received<input type="number" min="1" step="1" value={stockEntry.quantity} onChange={(event) => setStockEntry({ ...stockEntry, quantity: Math.max(1, Number(event.target.value) || 1) })} /></label>
+            <label className="stock-entry-field">Stock entry date<input type="date" value={stockEntry.entryDate} onChange={(event) => setStockEntry({ ...stockEntry, entryDate: event.target.value })} /><small>Format: DD-MM-YYYY · defaults to today</small></label>
             <div className="stock-entry-result"><span>New ready stock</span><strong>{stockEntry.product.stockQty + Math.floor(stockEntry.quantity)}</strong></div>
-            <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setStockEntry({ product: null, quantity: 1 })}>Cancel</button><button className="primary-small" disabled={busy}>Add to stock</button></div>
+            <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setStockEntry({ product: null, quantity: 1, entryDate: isoDate() })}>Cancel</button><button className="primary-small" disabled={busy}>Add to stock</button></div>
           </form>
         </div>
       )}
@@ -3776,8 +3814,10 @@ export default function Home() {
                       code: event.target.value.toUpperCase(),
                     })
                   }
-                  required
+                  placeholder={productForm.id ? "Product code" : "Auto-generated after saving"}
+                  readOnly={!productForm.id}
                 />
+                {!productForm.id && <small className="field-hint">Date + category + product + common serial number will be generated automatically.</small>}
               </label>
               <label>
                 HSN code
@@ -3831,6 +3871,10 @@ export default function Home() {
                     setProductForm({ ...productForm, size: event.target.value })
                   }
                 />
+              </label>
+              <label>
+                Skin type
+                <input value={productForm.skinType} onChange={(event) => setProductForm({ ...productForm, skinType: event.target.value })} placeholder="Fabric / laminate / finish" />
               </label>
               <label>
                 Wood type
@@ -3921,6 +3965,7 @@ export default function Home() {
         <div className="modal-backdrop"><form className="modal-card custom-product-modal" onSubmit={addCustomProduct}>
           <div className="modal-head"><div><span className="eyebrow">Custom furniture</span><h2>Add a made-to-order item</h2><small>Use this when the product is not in inventory. It will be marked Against Order and will not reduce ready stock.</small></div><button type="button" onClick={() => setShowCustomProduct(false)}>×</button></div>
           <div className="form-grid">
+            <label className="wide">Custom order type<select value={customProductForm.mode} onChange={(event) => setCustomProductForm({ ...customProductForm, mode: event.target.value as "Customization" | "Personalization" })}><option>Customization</option><option>Personalization</option></select><small>Choose whether the customer wants an existing product changed or a fully personal design.</small></label>
             <label className="wide">Product / work name<input value={customProductForm.name} onChange={(event) => setCustomProductForm({ ...customProductForm, name: event.target.value })} placeholder="Custom sofa, TV unit, dining table…" required /></label>
             <label>Size / measurements<input value={customProductForm.size} onChange={(event) => setCustomProductForm({ ...customProductForm, size: event.target.value })} placeholder="8 × 6 ft / 3 seater" /></label>
             <label>Material / wood<input value={customProductForm.woodType} onChange={(event) => setCustomProductForm({ ...customProductForm, woodType: event.target.value })} placeholder="Teak, fabric, plywood…" /></label>
@@ -3978,6 +4023,7 @@ export default function Home() {
                     <small>
                       {item.code} · Size {item.size || "—"} · Unit {money(item.price)} ·{" "}
                       {item.againstOrder ? "Against Order" : "Stock"}
+                      {item.customMode ? ` · ${item.customMode}` : ""}
                       {item.customizeDetails
                         ? ` · ${item.customizeDetails}`
                         : ""}
