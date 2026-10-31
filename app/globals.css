@@ -1400,6 +1400,13 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 .finance-note { display:flex; gap:10px; align-items:flex-start; padding:15px 17px; border:1px solid #cce1d6; border-radius:14px; background:#f1faf5; color:#48695a; font-size:12px; line-height:1.5; }
 .inventory-tags-heading { display:grid; gap:3px; margin-top:6px; padding-top:12px; border-top:1px solid var(--line); color:var(--ink); }
 .inventory-tags-heading small { color:var(--muted); font-size:11px; font-weight:500; }
+.tag-picker-field { display:grid; gap:8px; min-width:0; }
+.tag-picker-label { color:#76685e; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.tag-picker { display:flex; flex-wrap:wrap; gap:7px; min-height:42px; align-content:flex-start; }
+.tag-picker button { min-height:38px; padding:7px 11px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--muted); font-size:11px; font-weight:700; cursor:pointer; transition:background .16s ease,color .16s ease,border-color .16s ease,transform .16s ease; }
+.tag-picker button:hover { transform:translateY(-1px); border-color:var(--finance-accent,#287e68); color:var(--ink); }
+.tag-picker button.selected { border-color:#287e68; background:#287e68; color:#fff; box-shadow:0 5px 12px rgba(40,126,104,.18); }
+.tag-picker-selected { color:var(--muted); font-size:10px; line-height:1.4; }
 .product-tag-list { display:flex; flex-wrap:wrap; gap:4px; margin-top:7px; }
 .product-tag-list .soft-tag { font-size:9px; padding:3px 6px; }
 .finance-note strong { color:#1c6b55; white-space:nowrap; }

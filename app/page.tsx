@@ -375,6 +375,9 @@ function productCodePreview(category: string, name: string) {
   const part = (value: string, fallback: string) => value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 4) || fallback;
   return `${isoDate().replace(/-/g, "")}-${part(category, "PROD")}-${part(name, "ITEM")}-AUTO`;
 }
+function splitProductTags(value: string) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
 function productTone(product: { code: string }) {
   const seed = [...product.code].reduce(
     (sum, char) => sum + char.charCodeAt(0),
@@ -3006,7 +3009,7 @@ export default function Home() {
                         {[product.size, product.woodType, product.skinType]
                           .filter(Boolean)
                           .join(" · ") || "—"}
-                        {(product.costSegment || product.comfortTag || product.materialTag || product.lookTag || product.utilityTag || product.trendTag) && <div className="product-tag-list">{[product.costSegment, product.comfortTag, product.materialTag, product.lookTag, product.utilityTag, product.trendTag].filter(Boolean).map((tag) => <span className="soft-tag" key={tag}>{tag}</span>)}</div>}
+                        {(product.costSegment || product.comfortTag || product.materialTag || product.lookTag || product.utilityTag || product.trendTag) && <div className="product-tag-list">{[product.costSegment, product.comfortTag, product.materialTag, product.lookTag, product.utilityTag, product.trendTag].flatMap(splitProductTags).map((tag) => <span className="soft-tag" key={tag}>{tag}</span>)}</div>}
                       </td>
                       <td>
                         <strong>{money(product.price)}</strong>
@@ -3872,13 +3875,13 @@ export default function Home() {
                   {productCategoryOptions.map((item) => <option value={item} key={item}>{item}</option>)}
                 </select>
               </label>
-              <div className="wide inventory-tags-heading"><strong>Product tags</strong><small>Use these tags to help staff find the right product quickly.</small></div>
-              <label>Cost segment<select value={productForm.costSegment} onChange={(event) => setProductForm({ ...productForm, costSegment: event.target.value })}><option value="">Select cost segment</option>{productTagOptions.costSegment.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label>Comfort<select value={productForm.comfortTag} onChange={(event) => setProductForm({ ...productForm, comfortTag: event.target.value })}><option value="">Select comfort</option>{productTagOptions.comfortTag.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label>Material type<select value={productForm.materialTag} onChange={(event) => setProductForm({ ...productForm, materialTag: event.target.value })}><option value="">Select material</option>{productTagOptions.materialTag.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label>Looks<select value={productForm.lookTag} onChange={(event) => setProductForm({ ...productForm, lookTag: event.target.value })}><option value="">Select look</option>{productTagOptions.lookTag.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label>Utility<select value={productForm.utilityTag} onChange={(event) => setProductForm({ ...productForm, utilityTag: event.target.value })}><option value="">Select utility</option>{productTagOptions.utilityTag.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label>Trend relevance<select value={productForm.trendTag} onChange={(event) => setProductForm({ ...productForm, trendTag: event.target.value })}><option value="">Select trend</option>{productTagOptions.trendTag.map((item) => <option key={item}>{item}</option>)}</select></label>
+              <div className="wide inventory-tags-heading"><strong>Product tags</strong><small>Select multiple tags in every group. Click a selected tag again to unselect it.</small></div>
+              <TagPicker label="Cost segment" value={productForm.costSegment} options={productTagOptions.costSegment} onChange={(value) => setProductForm({ ...productForm, costSegment: value })} />
+              <TagPicker label="Comfort" value={productForm.comfortTag} options={productTagOptions.comfortTag} onChange={(value) => setProductForm({ ...productForm, comfortTag: value })} />
+              <TagPicker label="Material type" value={productForm.materialTag} options={productTagOptions.materialTag} onChange={(value) => setProductForm({ ...productForm, materialTag: value })} />
+              <TagPicker label="Looks" value={productForm.lookTag} options={productTagOptions.lookTag} onChange={(value) => setProductForm({ ...productForm, lookTag: value })} />
+              <TagPicker label="Utility" value={productForm.utilityTag} options={productTagOptions.utilityTag} onChange={(value) => setProductForm({ ...productForm, utilityTag: value })} />
+              <TagPicker label="Trend relevance" value={productForm.trendTag} options={productTagOptions.trendTag} onChange={(value) => setProductForm({ ...productForm, trendTag: value })} />
               <label>
                 Size
                 <input
@@ -4591,6 +4594,11 @@ function Nav({
       <b>{label}</b>
     </button>
   );
+}
+function TagPicker({ label, value, options, onChange }: { label: string; value: string; options: readonly string[]; onChange: (value: string) => void }) {
+  const selected = splitProductTags(value);
+  const toggle = (tag: string) => onChange(selected.includes(tag) ? selected.filter((item) => item !== tag).join(", ") : [...selected, tag].join(", "));
+  return <div className="tag-picker-field"><span className="tag-picker-label">{label}</span><div className="tag-picker" role="group" aria-label={label}>{options.map((tag) => <button type="button" key={tag} className={selected.includes(tag) ? "selected" : ""} onClick={() => toggle(tag)} aria-pressed={selected.includes(tag)}>{tag}</button>)}</div>{selected.length > 0 && <small className="tag-picker-selected">Selected: {selected.join(" · ")}</small>}</div>;
 }
 function Metric({
   label,
