@@ -3785,7 +3785,7 @@ export default function Home() {
 
       {showProductForm && (
         <div className="modal-backdrop">
-          <form className="modal-card" onSubmit={saveProduct}>
+          <form className="modal-card inventory-entry-modal" onSubmit={saveProduct}>
             <div className="modal-head">
               <div>
                 <span className="eyebrow">Inventory item</span>
@@ -3875,13 +3875,6 @@ export default function Home() {
                   {productCategoryOptions.map((item) => <option value={item} key={item}>{item}</option>)}
                 </select>
               </label>
-              <div className="wide inventory-tags-heading"><strong>Product tags</strong><small>Select multiple tags in every group. Click a selected tag again to unselect it.</small></div>
-              <TagPicker label="Cost segment" value={productForm.costSegment} options={productTagOptions.costSegment} onChange={(value) => setProductForm({ ...productForm, costSegment: value })} />
-              <TagPicker label="Comfort" value={productForm.comfortTag} options={productTagOptions.comfortTag} onChange={(value) => setProductForm({ ...productForm, comfortTag: value })} />
-              <TagPicker label="Material type" value={productForm.materialTag} options={productTagOptions.materialTag} onChange={(value) => setProductForm({ ...productForm, materialTag: value })} />
-              <TagPicker label="Looks" value={productForm.lookTag} options={productTagOptions.lookTag} onChange={(value) => setProductForm({ ...productForm, lookTag: value })} />
-              <TagPicker label="Utility" value={productForm.utilityTag} options={productTagOptions.utilityTag} onChange={(value) => setProductForm({ ...productForm, utilityTag: value })} />
-              <TagPicker label="Trend relevance" value={productForm.trendTag} options={productTagOptions.trendTag} onChange={(value) => setProductForm({ ...productForm, trendTag: value })} />
               <label>
                 Size
                 <input
@@ -3963,6 +3956,13 @@ export default function Home() {
                   }
                 />
               </label>
+              <div className="wide inventory-tags-heading inventory-tags-last"><strong>Product tags</strong><small>Optional merchandising details. Select multiple tags in each group; click again to unselect.</small></div>
+              <TagPicker label="Cost segment" value={productForm.costSegment} options={productTagOptions.costSegment} onChange={(value) => setProductForm({ ...productForm, costSegment: value })} />
+              <TagPicker label="Comfort" value={productForm.comfortTag} options={productTagOptions.comfortTag} onChange={(value) => setProductForm({ ...productForm, comfortTag: value })} />
+              <TagPicker label="Material type" value={productForm.materialTag} options={productTagOptions.materialTag} onChange={(value) => setProductForm({ ...productForm, materialTag: value })} />
+              <TagPicker label="Looks" value={productForm.lookTag} options={productTagOptions.lookTag} onChange={(value) => setProductForm({ ...productForm, lookTag: value })} />
+              <TagPicker label="Utility" value={productForm.utilityTag} options={productTagOptions.utilityTag} onChange={(value) => setProductForm({ ...productForm, utilityTag: value })} />
+              <TagPicker label="Trend relevance" value={productForm.trendTag} options={productTagOptions.trendTag} onChange={(value) => setProductForm({ ...productForm, trendTag: value })} />
             </div>
             <div className="modal-actions">
               <button
