@@ -177,6 +177,13 @@ type FinanceControls = {
   accountFund: number; cashInHand: number; cashInBank: number; deliveredCollection: number; pendingCollection: number; depositAmount: number; excessAmount: number;
 };
 type FinanceMember = { id: string; name: string; memberType: "Negotiable" | "Non-Negotiable"; amount: number; dueDate: string; notes: string; status: string; createdAt: string; updatedAt: string };
+const financeTabOptions = [
+  ["overview", "Financial overview", "◉"],
+  ["commitments", "Commitment log", "◷"],
+  ["expenses", "Expense log", "₹"],
+  ["bills", "Bill balance details", "▤"],
+  ["members", "Member login", "✓"],
+] as const;
 type BillingDraft = {
   cart: CartItem[];
   customer: {
@@ -2219,6 +2226,10 @@ export default function Home() {
             icon="₹"
             label="MD Metrics"
           />}
+          {currentUser?.role === "md" && active === "finance" && <div className="finance-side-nav" aria-label="MD Metrics sub-tabs">
+            <span>MD Metrics views</span>
+            {financeTabOptions.map(([key, label, icon]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => setFinanceTab(key)}><span>{icon}</span><b>{label}</b></button>)}
+          </div>}
           <Nav
             active={active === "settings"}
             onClick={() => setActive("settings")}
@@ -3508,7 +3519,6 @@ export default function Home() {
               </div>
               <div className="heading-actions"><button className="secondary-action" onClick={() => setShowCommitmentForm(true)}>＋ Commitment</button><button className="primary-small" onClick={() => setShowExpenseForm(true)}>＋ Expense</button></div>
             </div>
-            <div className="finance-howto"><span className="inventory-howto-icon">i</span><div><strong>Where to enter details</strong><span>Use <b>Commitment log → Add commitment</b> for one-week commitments. Use <b>Expense log → Add expense</b> for expenses. Use <b>Financial overview</b> for cash, bank, deposit and excess values. Bills are fetched automatically in Bill balance details.</span></div></div>
             <div className="metric-grid finance-metrics">
               <Metric label="Commitments" value={money(financeCommitmentTotal)} note={`${state.financeCommitments.length} records`} />
               <Metric label="Expenses" value={money(financeExpenseTotal)} note={`${state.financeExpenses.length} records`} />
@@ -3516,8 +3526,8 @@ export default function Home() {
               <Metric label="Collection potential" value={money(financePotentialTotal)} note="Delivered + pending" />
               <Metric label="Excess / deficit" value={money(Math.abs(financeExcessDeficit))} note={financeExcessDeficit < 0 ? "Deficit against commitments" : "Excess after commitments"} />
             </div>
-            <div className="finance-tabs" role="tablist" aria-label="Finance views">
-              {([['overview', 'Financial overview'], ['commitments', 'Commitment log'], ['expenses', 'Expense log'], ['bills', 'Bill balance details'], ['members', 'Member login']] as const).map(([key, label]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => setFinanceTab(key)}>{label}</button>)}
+            <div className="finance-mobile-tabs" role="tablist" aria-label="Finance views">
+              {financeTabOptions.map(([key, label, icon]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => setFinanceTab(key)}><span>{icon}</span>{label}</button>)}
             </div>
             {financeTab === "overview" && <div className="finance-tab-panel">
               <div className="section-heading compact-heading"><div><span className="eyebrow">Control totals</span><h2>Keep the daily fund picture current.</h2><p>These four values mirror the MD metrics workbook and are editable by the MD.</p></div></div>
