@@ -182,7 +182,6 @@ const financeTabOptions = [
   ["commitments", "Commitment log", "◷"],
   ["expenses", "Expense log", "₹"],
   ["bills", "Bill balance details", "▤"],
-  ["members", "Member login", "✓"],
 ] as const;
 type BillingDraft = {
   cart: CartItem[];
@@ -314,6 +313,28 @@ const productCategoryOptions = [
   "Dining Table", "Dining Chairs", "Dining Set", "Wardrobe", "TV Console", "Gift Articles",
   "Wall hangings", "Pillows", "Utilities & Accessories", "Miscellaneous", "Custom Made",
 ];
+const categorySizeOptions: Record<string, string[]> = {
+  Sofa: ["3+1+1", "3 Seater", "2 Seater", "Single Seater", "L Shape", "Others"],
+  "Wooden Sofa": ["3+1+1", "3 Seater", "2 Seater", "Single Seater", "L Shape", "Others"],
+  Cot: ["75×60", "78×60", "72×60", "King Size", "Queen Size", "Single", "Others"],
+  "Cot / Bed": ["75×60", "78×60", "72×60", "King Size", "Queen Size", "Single", "Others"],
+  Mattress: ["75×60×6\"", "78×60×6\"", "72×36×6\"", "King", "Queen", "Single", "Others"],
+  "Dining Table": ["4 Seater", "6 Seater", "8 Seater", "10 Seater", "4×2", "6×3", "Others"],
+  "Dining Chair": ["Side Chair", "Arm Chair", "Bench", "Bar Chair", "Others"],
+  "Dining Set": ["4 Seater", "6 Seater", "8 Seater", "10 Seater", "Others"],
+  "Dining Chairs": ["Side Chair", "Arm Chair", "Bench", "Others"],
+  "Suite Chair": ["Single Seater", "2 Seater", "3 Seater", "Others"],
+  Lounge: ["Single Seater", "2 Seater", "3 Seater", "Recliner", "Others"],
+  Chair: ["Single Seater", "Arm Chair", "Visitor", "Rocking", "Others"],
+  Wardrobe: ["2 Door", "3 Door", "4 Door", "Sliding", "Others"],
+  "Dressing Table": ["3 ft", "4 ft", "5 ft", "With Mirror", "Others"],
+  "TV Unit": ["4 ft", "5 ft", "6 ft", "Wall Mounted", "Others"],
+  "TV Console": ["4 ft", "5 ft", "6 ft", "Wall Mounted", "Others"],
+  "Office Chair": ["Visitor", "Executive", "Staff", "High Back", "Others"],
+  "Office Table": ["3×2", "4×2", "5×2.5", "6×3", "Others"],
+  "Office Furniture": ["3×2", "4×2", "5×2.5", "6×3", "Others"],
+  Recliner: ["Single Seater", "2 Seater", "Manual", "Motorised", "Others"],
+};
 const productTagOptions = {
   costSegment: ["Economy / Budget", "Mid-Segment", "Premium", "Luxury", "Max Value"],
   comfortTag: ["Ortho-Supported", "Lounging / Relaxed", "Attentive / Office", "Residential Comfort", "Long-Stay Comfort"],
@@ -322,6 +343,7 @@ const productTagOptions = {
   utilityTag: ["Compact / Space Saving", "Convertible", "Reclining", "Concealed Storage", "Sofa Cum Bed"],
   trendTag: ["New Arrival", "Clearance", "Hot Pick", "Made to Order"],
 };
+const productTagFilterOptions = Object.entries(productTagOptions).flatMap(([group, tags]) => tags.map((tag) => ({ value: `${group}:${tag}`, label: `${group.replace(/Tag|Segment/gi, "")} · ${tag}`, tag })));
 const paymentModes = ["CASH", "GPAY", "CARD", "RTGS", "BAJAJ", "CHEQUE"];
 const deliveryStages = ["Order Booked", "Supplier Assigned", "In Production", "Ready", "Out for Delivery", "Delivered"];
 const taskTemplates = [
@@ -505,6 +527,7 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [stockFilter, setStockFilter] = useState("all");
+  const [inventoryTagFilters, setInventoryTagFilters] = useState<string[]>([]);
   const [busy, setBusy] = useState(true);
   const [online, setOnline] = useState(true);
   const [toast, setToast] = useState("");
@@ -596,13 +619,14 @@ export default function Home() {
   const [restoredOffline, setRestoredOffline] = useState(false);
   const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({ status: "Active" });
   const [financeTab, setFinanceTab] = useState<"overview" | "commitments" | "expenses" | "bills" | "members">("overview");
+  const [commitmentUnlocked, setCommitmentUnlocked] = useState(false);
+  const [showCommitmentPassword, setShowCommitmentPassword] = useState(false);
+  const [commitmentPassword, setCommitmentPassword] = useState("");
   const [commitmentForm, setCommitmentForm] = useState<Partial<FinanceCommitment>>({ dueDate: isoDate(), amount: 0 });
-  const [expenseForm, setExpenseForm] = useState<Partial<FinanceExpense>>({ automatedDate: isoDate(), amount: 0 });
   const [financeControlsForm, setFinanceControlsForm] = useState<FinanceControls>({ accountFund: 0, cashInHand: 0, cashInBank: 0, deliveredCollection: 0, pendingCollection: 0, depositAmount: 0, excessAmount: 0 });
   const [financeMemberForm, setFinanceMemberForm] = useState<Partial<FinanceMember>>({ memberType: "Negotiable", status: "Pending", dueDate: isoDate() });
   const [financeMemberTab, setFinanceMemberTab] = useState<"Negotiable" | "Non-Negotiable" | "Overview">("Overview");
   const [showCommitmentForm, setShowCommitmentForm] = useState(false);
-  const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [taskForm, setTaskForm] = useState<Partial<ExpoTask>>({ category: "Follow-up", priority: "Normal", status: "Pending" });
   const [taskCategoryLocked, setTaskCategoryLocked] = useState(false);
   const [taskTemplateKey, setTaskTemplateKey] = useState("");
@@ -903,12 +927,12 @@ export default function Home() {
           ].some((value) => value?.toLowerCase().includes(query))),
     );
   }, [state.products, search, category]);
-  const inventoryProducts = useMemo(() => filteredProducts.filter((product) =>
-    stockFilter === "all" ||
-    (stockFilter === "available" && product.stockQty > 2) ||
-    (stockFilter === "low" && product.stockQty > 0 && product.stockQty <= 2) ||
-    (stockFilter === "out" && product.stockQty <= 0),
-  ), [filteredProducts, stockFilter]);
+  const inventoryProducts = useMemo(() => filteredProducts.filter((product) => {
+    const stockMatch = stockFilter === "all" || (stockFilter === "available" && product.stockQty > 2) || (stockFilter === "low" && product.stockQty > 0 && product.stockQty <= 2) || (stockFilter === "out" && product.stockQty <= 0);
+    const selectedTags = [product.costSegment, product.comfortTag, product.materialTag, product.lookTag, product.utilityTag, product.trendTag].flatMap(splitProductTags);
+    const tagMatch = !inventoryTagFilters.length || inventoryTagFilters.some((filter) => selectedTags.includes(filter.split(":").slice(1).join(":")));
+    return stockMatch && tagMatch;
+  }), [filteredProducts, stockFilter, inventoryTagFilters]);
 
   async function adjustStock(product: Product, delta: number) {
     if (delta < 0 && product.stockQty <= 0) return;
@@ -1710,17 +1734,29 @@ export default function Home() {
     if (data) { setCommitmentForm({ dueDate: isoDate(), amount: 0 }); setShowCommitmentForm(false); }
   }
 
-  async function saveExpense(event: FormEvent) {
-    event.preventDefault();
-    if (!expenseForm.payee?.trim() || Number(expenseForm.amount || 0) <= 0) return notify("Amount and payee are required.");
-    const data = await mutate({ action: "saveExpense", expense: expenseForm }, expenseForm.id ? "Expense updated." : "Expense added.");
-    if (data) { setExpenseForm({ automatedDate: isoDate(), amount: 0 }); setShowExpenseForm(false); }
-  }
   async function saveFinanceMember(event: FormEvent) {
     event.preventDefault();
     if (!financeMemberForm.name?.trim()) return notify("Member name is required.");
     const data = await mutate({ action: "saveFinanceMember", member: financeMemberForm }, financeMemberForm.id ? "Member item updated." : "Member item added.");
     if (data) setFinanceMemberForm({ memberType: "Negotiable", status: "Pending", dueDate: isoDate() });
+  }
+
+  function openCommitmentLog() {
+    if (commitmentUnlocked) return setFinanceTab("commitments");
+    setCommitmentPassword("");
+    setShowCommitmentPassword(true);
+  }
+  function verifyCommitmentPassword(event: FormEvent) {
+    event.preventDefault();
+    if (commitmentPassword !== "SH2026") return notify("Incorrect commitment log password.");
+    setCommitmentUnlocked(true);
+    setShowCommitmentPassword(false);
+    setCommitmentPassword("");
+    setFinanceTab("commitments");
+  }
+  function openCommitmentForm() {
+    if (!commitmentUnlocked) return openCommitmentLog();
+    setShowCommitmentForm(true);
   }
 
   async function deleteFinanceRow(action: "deleteCommitment" | "deleteExpense", id: string) {
@@ -2292,7 +2328,7 @@ export default function Home() {
           />}
           {currentUser?.role === "md" && active === "finance" && <div className="finance-side-nav" aria-label="MD Metrics sub-tabs">
             <span>MD Metrics views</span>
-            {financeTabOptions.map(([key, label, icon]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => setFinanceTab(key)}><span>{icon}</span><b>{label}</b></button>)}
+            {financeTabOptions.map(([key, label, icon]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => key === "commitments" ? openCommitmentLog() : setFinanceTab(key)}><span>{icon}</span><b>{label}</b></button>)}
           </div>}
           <Nav
             active={active === "settings"}
@@ -3033,6 +3069,7 @@ export default function Home() {
               <div className="stock-filters" aria-label="Stock filters">
                 {[["all", "All"], ["available", "Available"], ["low", "Low"], ["out", "Out"]].map(([key, label]) => <button key={key} className={stockFilter === key ? "active" : ""} onClick={() => setStockFilter(key)}>{label}</button>)}
               </div>
+              <details className="inventory-tag-filter"><summary>Tags{inventoryTagFilters.length ? ` · ${inventoryTagFilters.length}` : ""}</summary><div className="inventory-tag-filter-popover">{productTagFilterOptions.map((option) => <button type="button" key={option.value} className={inventoryTagFilters.includes(option.value) ? "active" : ""} onClick={() => setInventoryTagFilters((current) => current.includes(option.value) ? current.filter((value) => value !== option.value) : [...current, option.value])}>{option.label}</button>)}{inventoryTagFilters.length > 0 && <button type="button" className="clear-tag-filters" onClick={() => setInventoryTagFilters([])}>Clear tags</button>}</div></details>
               <button className="text-button refresh-stock-button" onClick={() => load()}>
                 <span className="button-icon">↻</span> Refresh stock
               </button>
@@ -3581,7 +3618,7 @@ export default function Home() {
                 <h1>Financial monitoring, clearly organised.</h1>
                 <p>Commitments, available funds, expected collections, deposits and pending member work in one MD-only view.</p>
               </div>
-              <div className="heading-actions"><button className="secondary-action" onClick={() => setShowCommitmentForm(true)}>＋ Commitment</button><button className="primary-small" onClick={() => setShowExpenseForm(true)}>＋ Expense</button></div>
+              <div className="heading-actions"><button className="secondary-action" onClick={openCommitmentForm}>＋ Commitment</button></div>
             </div>
             <div className="metric-grid finance-metrics">
               <Metric label="Commitments" value={money(financeCommitmentTotal)} note={`${state.financeCommitments.length} records`} />
@@ -3591,8 +3628,9 @@ export default function Home() {
               <Metric label="Excess / deficit" value={money(Math.abs(financeExcessDeficit))} note={financeExcessDeficit < 0 ? "Deficit against commitments" : "Excess after commitments"} />
             </div>
             <div className="finance-mobile-tabs" role="tablist" aria-label="Finance views">
-              {financeTabOptions.map(([key, label, icon]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => setFinanceTab(key)}><span>{icon}</span>{label}</button>)}
+              {financeTabOptions.map(([key, label, icon]) => <button key={key} className={financeTab === key ? "active" : ""} onClick={() => key === "commitments" ? openCommitmentLog() : setFinanceTab(key)}><span>{icon}</span>{label}</button>)}
             </div>
+            {(financeTab === "overview" || financeTab === "members") && <div className="finance-overview-tabs" role="tablist" aria-label="Financial overview sections"><button className={financeTab === "overview" ? "active" : ""} onClick={() => setFinanceTab("overview")}>Financial overview</button><button className={financeTab === "members" ? "active" : ""} onClick={() => setFinanceTab("members")}>Member login</button></div>}
             {financeTab === "overview" && <div className="finance-tab-panel">
               <div className="section-heading compact-heading"><div><span className="eyebrow">Control totals</span><h2>Keep the daily fund picture current.</h2><p>These four values mirror the MD metrics workbook and are editable by the MD.</p></div></div>
               <form className="settings-card finance-control-card" onSubmit={saveFinanceControls}>
@@ -3615,8 +3653,8 @@ export default function Home() {
                 <details><summary><span>Deposit & excess</span><b>{money(financeControlsForm.depositAmount + financeControlsForm.excessAmount)}</b></summary><p>Deposit: {money(financeControlsForm.depositAmount)} · Excess: {money(financeControlsForm.excessAmount)}.</p></details>
               </div>
             </div>}
-            {financeTab === "commitments" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Commitment log</span><h2>Upcoming amounts to pay.</h2></div><button className="primary-small" onClick={() => setShowCommitmentForm(true)}>＋ Add commitment</button></div><div className="table-wrap"><table><thead><tr><th>Amount</th><th>To</th><th>Due</th><th>Account head</th><th>Raised by</th><th>Approved by</th><th></th></tr></thead><tbody>{state.financeCommitments.map((row) => <tr key={row.id}><td>{money(row.amount)}</td><td>{row.payee}</td><td>{row.dueDate || "—"}</td><td>{row.accountHead || "—"}</td><td>{row.raisedBy || "—"}</td><td>{row.approvedBy || "—"}</td><td><button className="table-action danger" onClick={() => deleteFinanceRow("deleteCommitment", row.id)}>Remove</button></td></tr>)}{!state.financeCommitments.length && <tr><td colSpan={7}><div className="today-empty">No commitments entered yet.</div></td></tr>}</tbody></table></div></div>}
-            {financeTab === "expenses" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Expenses log</span><h2>Recorded showroom expenses.</h2></div><button className="primary-small" onClick={() => setShowExpenseForm(true)}>＋ Add expense</button></div><div className="table-wrap"><table><thead><tr><th>Amount</th><th>To</th><th>Automated date</th><th>Account head</th><th>Raised by</th><th>Approved by</th><th></th></tr></thead><tbody>{state.financeExpenses.map((row) => <tr key={row.id}><td>{money(row.amount)}</td><td>{row.payee}</td><td>{row.automatedDate || "—"}</td><td>{row.accountHead || "—"}</td><td>{row.raisedBy || "—"}</td><td>{row.approvedBy || "—"}</td><td><button className="table-action danger" onClick={() => deleteFinanceRow("deleteExpense", row.id)}>Remove</button></td></tr>)}{!state.financeExpenses.length && <tr><td colSpan={7}><div className="today-empty">No expenses entered yet.</div></td></tr>}</tbody></table></div></div>}
+            {financeTab === "commitments" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Commitment log</span><h2>Upcoming amounts to pay.</h2></div><button className="primary-small" onClick={openCommitmentForm}>＋ Add commitment</button></div><div className="table-wrap"><table><thead><tr><th>Amount</th><th>To</th><th>Due</th><th>Account head</th><th>Raised by</th><th>Approved by</th><th></th></tr></thead><tbody>{state.financeCommitments.map((row) => <tr key={row.id}><td>{money(row.amount)}</td><td>{row.payee}</td><td>{row.dueDate || "—"}</td><td>{row.accountHead || "—"}</td><td>{row.raisedBy || "—"}</td><td>{row.approvedBy || "—"}</td><td><button className="table-action danger" onClick={() => deleteFinanceRow("deleteCommitment", row.id)}>Remove</button></td></tr>)}{!state.financeCommitments.length && <tr><td colSpan={7}><div className="today-empty">No commitments entered yet.</div></td></tr>}</tbody></table></div></div>}
+            {financeTab === "expenses" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Expenses log · Read only</span><h2>Recorded showroom expenses.</h2><p>Expense records are locked; MD can review them but cannot edit or remove them here.</p></div></div><div className="table-wrap"><table><thead><tr><th>Amount</th><th>To</th><th>Automated date</th><th>Account head</th><th>Raised by</th><th>Approved by</th></tr></thead><tbody>{state.financeExpenses.map((row) => <tr key={row.id}><td>{money(row.amount)}</td><td>{row.payee}</td><td>{row.automatedDate || "—"}</td><td>{row.accountHead || "—"}</td><td>{row.raisedBy || "—"}</td><td>{row.approvedBy || "—"}</td></tr>)}{!state.financeExpenses.length && <tr><td colSpan={6}><div className="today-empty">No expenses entered yet.</div></td></tr>}</tbody></table></div></div>}
             {financeTab === "bills" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Bill balances & delivery</span><h2>Collection potential by order.</h2><p>Cancelled bills are excluded from this tracker.</p></div></div><div className="table-wrap"><table><thead><tr><th>Bill no.</th><th>Job card</th><th>Products</th><th>Qty</th><th>Value</th><th>Balance</th><th>Potential</th><th>Delivery</th><th>Contact</th></tr></thead><tbody>{activeBills.map((bill) => { const value = bill.productTotal + bill.againstOrderExtra; const jobs = state.jobCards.filter((job) => job.billId === bill.id).map((job) => job.jobNo).join(", "); return <tr key={bill.id}><td><strong>{bill.billNo}</strong></td><td>{jobs || "—"}</td><td>{bill.items.map((item) => item.name).join(", ") || "—"}</td><td>{bill.items.reduce((sum, item) => sum + item.qty, 0)}</td><td>{money(value)}</td><td>{money(bill.balanceAmount)}</td><td>{value > 0 ? `${Math.round((bill.balanceAmount / value) * 100)}%` : "0%"}</td><td>{bill.deliveryDate || "Not set"}</td><td>{bill.customerPhone || "—"}</td></tr>; })}{!activeBills.length && <tr><td colSpan={9}><div className="today-empty">Saved bills will appear here automatically.</div></td></tr>}</tbody></table></div></div>}
             {financeTab === "members" && <div className="finance-tab-panel"><div className="section-heading compact-heading"><div><span className="eyebrow">Member login checklist</span><h2>Negotiable, non-negotiable & overview.</h2><p>Tick completed financial items; pending items remain visible in Overview.</p></div></div><div className="finance-tabs member-tabs">{(["Negotiable", "Non-Negotiable", "Overview"] as const).map((tab) => <button key={tab} className={financeMemberTab === tab ? "active" : ""} onClick={() => setFinanceMemberTab(tab)}>{tab}</button>)}</div><form className="settings-card finance-control-card" onSubmit={saveFinanceMember}><div className="form-grid"><label>Member / item name<input value={financeMemberForm.name || ""} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, name: event.target.value })} required /></label><label>Type<select value={financeMemberForm.memberType || "Negotiable"} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, memberType: event.target.value as FinanceMember["memberType"] })}><option>Negotiable</option><option>Non-Negotiable</option></select></label><label>Amount<input type="number" min="0" step="0.01" value={financeMemberForm.amount || ""} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, amount: Number(event.target.value) || 0 })} /></label><label>Due date<input type="date" value={financeMemberForm.dueDate || isoDate()} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, dueDate: event.target.value })} /></label><label>Status<select value={financeMemberForm.status || "Pending"} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, status: event.target.value })}><option>Pending</option><option>Completed</option></select></label><label className="wide">Notes<textarea rows={2} value={financeMemberForm.notes || ""} onChange={(event) => setFinanceMemberForm({ ...financeMemberForm, notes: event.target.value })} /></label></div><div className="form-actions"><button className="primary-small">Save member item</button></div></form><div className="member-status-list">{state.financeMembers.filter((item) => financeMemberTab === "Overview" || item.memberType === financeMemberTab).map((item) => <article key={item.id} className={item.status === "Completed" ? "completed" : "pending"}><div><strong>{item.name}</strong><small>{item.memberType} · {item.dueDate || "No due date"} · {money(item.amount)}</small>{item.notes && <small>{item.notes}</small>}</div><button type="button" className={`member-complete-toggle ${item.status === "Completed" ? "completed" : ""}`} onClick={() => mutate({ action: "saveFinanceMember", member: { ...item, status: item.status === "Completed" ? "Pending" : "Completed" } }, item.status === "Completed" ? "Member item reopened." : "Member item completed.")}>{item.status === "Completed" ? "✓ Completed" : "○ Mark complete"}</button><button className="danger-link" onClick={() => deleteFinanceMember(item.id)}>Remove</button></article>)}{!state.financeMembers.filter((item) => financeMemberTab === "Overview" || item.memberType === financeMemberTab).length && <div className="today-empty">No member items in this view.</div>}</div></div>}
           </section>
@@ -3938,12 +3976,13 @@ export default function Home() {
               </label>
               <label>
                 Size
-                <input
+                <input list="category-sizes"
                   value={productForm.size}
                   onChange={(event) =>
                     setProductForm({ ...productForm, size: event.target.value })
                   }
                 />
+                <datalist id="category-sizes">{(categorySizeOptions[productForm.category] || ["Standard", "Custom", "Others"]).map((size) => <option key={size} value={size} />)}</datalist>
               </label>
               <label>
                 Skin type
@@ -4411,6 +4450,14 @@ export default function Home() {
         </div>
       )}
 
+      {showCommitmentPassword && (
+        <div className="modal-backdrop"><form className="modal-card finance-password-modal" onSubmit={verifyCommitmentPassword}>
+          <div className="modal-head"><div><span className="eyebrow">MD Metrics security</span><h2>Unlock Commitment log</h2><small>Enter the authorised password to view and add weekly commitments.</small></div><button type="button" onClick={() => setShowCommitmentPassword(false)}>×</button></div>
+          <label className="reason-field">Commitment log password<input type="password" autoFocus value={commitmentPassword} onChange={(event) => setCommitmentPassword(event.target.value)} placeholder="Enter password" required /></label>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowCommitmentPassword(false)}>Cancel</button><button className="primary-small">Unlock</button></div>
+        </form></div>
+      )}
+
       {showCommitmentForm && (
         <div className="modal-backdrop"><form className="modal-card" onSubmit={saveCommitment}>
           <div className="modal-head"><div><span className="eyebrow">Finance · Commitment</span><h2>{commitmentForm.id ? "Edit commitment" : "Add commitment"}</h2></div><button type="button" onClick={() => setShowCommitmentForm(false)}>×</button></div>
@@ -4423,21 +4470,6 @@ export default function Home() {
             <label>Approved by<input value={commitmentForm.approvedBy || ""} onChange={(event) => setCommitmentForm({ ...commitmentForm, approvedBy: event.target.value })} /></label>
           </div>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowCommitmentForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>Save commitment</button></div>
-        </form></div>
-      )}
-
-      {showExpenseForm && (
-        <div className="modal-backdrop"><form className="modal-card" onSubmit={saveExpense}>
-          <div className="modal-head"><div><span className="eyebrow">Finance · Expense</span><h2>{expenseForm.id ? "Edit expense" : "Add expense"}</h2></div><button type="button" onClick={() => setShowExpenseForm(false)}>×</button></div>
-          <div className="form-grid">
-            <label>Amount<input type="number" min="0.01" step="0.01" value={expenseForm.amount || ""} onChange={(event) => setExpenseForm({ ...expenseForm, amount: Number(event.target.value) || 0 })} required /></label>
-            <label>To / payee<input value={expenseForm.payee || ""} onChange={(event) => setExpenseForm({ ...expenseForm, payee: event.target.value })} required /></label>
-            <label>Automated date<input type="date" value={expenseForm.automatedDate || isoDate()} onChange={(event) => setExpenseForm({ ...expenseForm, automatedDate: event.target.value })} /></label>
-            <label>Account head<input value={expenseForm.accountHead || ""} onChange={(event) => setExpenseForm({ ...expenseForm, accountHead: event.target.value })} placeholder="IB 1 · Marketing" /></label>
-            <label>Raised by<input value={expenseForm.raisedBy || ""} onChange={(event) => setExpenseForm({ ...expenseForm, raisedBy: event.target.value })} /></label>
-            <label>Approved by<input value={expenseForm.approvedBy || ""} onChange={(event) => setExpenseForm({ ...expenseForm, approvedBy: event.target.value })} /></label>
-          </div>
-          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowExpenseForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>Save expense</button></div>
         </form></div>
       )}
 
