@@ -413,8 +413,12 @@ function productCodePreview(category: string, name: string) {
   const part = (value: string, fallback: string) => value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 4) || fallback;
   return `${isoDate().replace(/-/g, "")}-${part(category, "PROD")}-${part(name, "ITEM")}-AUTO`;
 }
-function splitProductTags(value: string) {
-  return value.split(",").map((item) => item.trim()).filter(Boolean);
+function normalizeTagValue(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+function splitProductTags(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => splitProductTags(item));
+  return String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 function productTone(product: { code: string }) {
   const seed = [...product.code].reduce(
@@ -925,13 +929,19 @@ export default function Home() {
             product.category,
             product.size,
             product.woodType,
+            product.costSegment,
+            product.comfortTag,
+            product.materialTag,
+            product.lookTag,
+            product.utilityTag,
+            product.trendTag,
           ].some((value) => value?.toLowerCase().includes(query))),
     );
   }, [state.products, search, category]);
   const inventoryProducts = useMemo(() => filteredProducts.filter((product) => {
     const stockMatch = stockFilter === "all" || (stockFilter === "available" && product.stockQty > 2) || (stockFilter === "low" && product.stockQty > 0 && product.stockQty <= 2) || (stockFilter === "out" && product.stockQty <= 0);
-    const selectedTags = [product.costSegment, product.comfortTag, product.materialTag, product.lookTag, product.utilityTag, product.trendTag].flatMap(splitProductTags);
-    const tagMatch = !inventoryTagFilters.length || inventoryTagFilters.some((filter) => selectedTags.includes(filter.split(":").slice(1).join(":")));
+    const selectedTags = [product.costSegment, product.comfortTag, product.materialTag, product.lookTag, product.utilityTag, product.trendTag].flatMap(splitProductTags).map(normalizeTagValue);
+    const tagMatch = !inventoryTagFilters.length || inventoryTagFilters.some((filter) => selectedTags.includes(normalizeTagValue(filter.split(":").slice(1).join(":"))));
     return stockMatch && tagMatch;
   }), [filteredProducts, stockFilter, inventoryTagFilters]);
 
