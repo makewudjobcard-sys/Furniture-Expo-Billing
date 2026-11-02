@@ -1317,6 +1317,18 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
 .task-sort-controls select { min-width: 155px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 9px 10px; font-size: 11px; text-transform: none; letter-spacing: 0; }
 .task-sort-controls select[multiple] { min-width: 175px; min-height: 42px; max-height: 92px; padding: 6px; }
 .task-sort-controls select[multiple] option { padding: 4px 6px; border-radius: 6px; }
+.staff-filter-picker { position: relative; min-width: 175px; }
+.staff-filter-picker summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 11px; font-weight: 750; cursor: pointer; list-style: none; text-transform: none; letter-spacing: 0; }
+.staff-filter-picker summary::-webkit-details-marker { display: none; }
+.staff-filter-picker summary::after { content: "⌄"; color: var(--muted); font-size: 14px; }
+.staff-filter-popover { position: absolute; z-index: 12; top: calc(100% + 7px); right: 0; display: grid; gap: 5px; width: min(240px, calc(100vw - 40px)); max-height: 260px; overflow: auto; padding: 9px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 36px rgba(32,22,16,.2); }
+.staff-filter-popover button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 7px 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; font-size: 11px; font-weight: 700; cursor: pointer; }
+.staff-filter-popover button:hover { background: color-mix(in srgb, var(--paper) 68%, var(--surface)); }
+.staff-filter-popover button.selected { border-color: #9bcdb7; background: #e8f5ed; color: #196548; }
+.staff-filter-mark { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 6px; color: #b54135; font-size: 13px; font-weight: 900; }
+.staff-filter-popover button.selected .staff-filter-mark { border-color: #2c8a6c; background: #2c8a6c; color: #fff; }
+.staff-filter-popover .clear-staff-filter { justify-content: center; border-color: #d7a8a1; color: #b54135; }
+.staff-filter-popover small { padding: 8px; color: var(--muted); font-size: 10px; }
 .assigned-task-field { padding: 14px; border: 1px solid #b8d6c5; border-radius: 14px; background: #f0f7f2; }
 .assigned-task-field input { min-height: 46px; font-size: 13px; font-weight: 650; border-color: #a9cdb8; }
 .field-hint { color: var(--muted); font-size: 9px; font-weight: 500; letter-spacing: 0; text-transform: none; }
@@ -1353,6 +1365,9 @@ body,button,input,select,textarea,h1,h2,h3,h4,.section-heading h1,.card-heading 
   .dashboard-task-controls > strong { width: 100%; }
   .dashboard-task-controls label { flex: 1 1 150px; grid-template-columns: 1fr; }
   .dashboard-task-controls select { width: 100%; }
+  .dashboard-task-controls .staff-filter-picker,
+  .task-sort-controls .staff-filter-picker { flex: 1 1 150px; min-width: 0; }
+  .staff-filter-picker summary { width: 100%; }
 }
 
 /* Final polish: lighter navigation, resilient inputs and payment preview. */
