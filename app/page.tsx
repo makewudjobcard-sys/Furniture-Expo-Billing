@@ -353,7 +353,7 @@ const taskTemplates = [
   { icon: "↗", key: "development", category: "Development", title: "Business development", details: "Review improvement ideas, staff needs and showroom growth work." },
   { icon: "₹", key: "financial", category: "Financial Commitment", title: "Payment commitment", details: "Record the payable/receivable amount and completion plan." },
 ];
-const cancellationReasons = ["Quality issue", "Product variety", "Price is too high", "Customer not ready", "No response", "Other"] as const;
+const cancellationReasons = ["Billed", "Quality Issue", "Product Variety"] as const;
 function isCustomerFollowUp(value: { category?: string; title?: string; type?: string }) {
   const category = (value.category || value.type || "").toLowerCase();
   const title = (value.title || "").toLowerCase();
@@ -1816,8 +1816,8 @@ export default function Home() {
   async function saveCancellation(event: FormEvent) {
     event.preventDefault();
     if (!cancellationTarget) return;
-    const reason = cancellationReason === "Other" ? `Other: ${cancellationOtherReason.trim()}` : cancellationReason;
-    if (!cancellationReason || (cancellationReason === "Other" && !cancellationOtherReason.trim())) return notify("Choose a cancellation reason and enter the details.");
+    const reason = cancellationReason;
+    if (!cancellationReasons.includes(reason as typeof cancellationReasons[number])) return notify("Choose Billed, Quality Issue or Product Variety.");
     const action = cancellationTarget.kind === "task" ? "cancelTask" : "cancelInteraction";
     const data = await mutate({ action, id: cancellationTarget.id, reason }, "Cancellation recorded with reason.");
     if (data) {
@@ -4538,8 +4538,7 @@ export default function Home() {
         <div className="modal-backdrop"><form className="modal-card task-reason-modal cancellation-modal" onSubmit={saveCancellation}>
           <div className="modal-head"><div><span className="eyebrow">Customer follow-up</span><h2>Why was this cancelled?</h2><small>{cancellationTarget.title}</small></div><button type="button" onClick={() => setCancellationTarget(null)}>×</button></div>
           <label className="reason-field">Cancellation reason<select value={cancellationReason} onChange={(event) => setCancellationReason(event.target.value)} required><option value="">Choose a reason</option>{cancellationReasons.map((reason) => <option key={reason}>{reason}</option>)}</select></label>
-          {cancellationReason === "Other" && <label className="reason-field">Other reason<textarea rows={3} autoFocus value={cancellationOtherReason} onChange={(event) => setCancellationOtherReason(event.target.value)} placeholder="Type the cancellation reason…" required /></label>}
-          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setCancellationTarget(null)}>Back</button><button className="danger-button" disabled={busy || !cancellationReason || (cancellationReason === "Other" && !cancellationOtherReason.trim())}>Save cancellation</button></div>
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setCancellationTarget(null)}>Back</button><button className="danger-button" disabled={busy || !cancellationReason}>Save cancellation</button></div>
         </form></div>
       )}
 
