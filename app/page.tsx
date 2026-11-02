@@ -357,7 +357,8 @@ const cancellationReasons = ["Quality issue", "Product variety", "Price is too h
 function isCustomerFollowUp(value: { category?: string; title?: string; type?: string }) {
   const category = (value.category || value.type || "").toLowerCase();
   const title = (value.title || "").toLowerCase();
-  return category === "follow-up" || category === "follow up" || title.includes("customer follow-up") || title.includes("customer follow up");
+  const followUpTypes = ["enquiry", "follow-up", "follow up", "order follow-up", "order follow up", "happy call"];
+  return followUpTypes.includes(category) || title.includes("customer follow-up") || title.includes("customer follow up");
 }
 function followUpFrequency(priority?: string) {
   switch ((priority || "Normal").toLowerCase()) {
