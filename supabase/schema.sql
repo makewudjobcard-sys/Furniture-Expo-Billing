@@ -123,6 +123,7 @@ create table if not exists public.tasks (
   commitment_date text not null default '',
   notes text not null default '',
   completion_reason text not null default '',
+  cancellation_reason text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -134,6 +135,7 @@ alter table public.tasks add column if not exists attended_by text not null defa
 alter table public.tasks add column if not exists commitment_date text not null default '';
 alter table public.tasks add column if not exists notes text not null default '';
 alter table public.tasks add column if not exists completion_reason text not null default '';
+alter table public.tasks add column if not exists cancellation_reason text not null default '';
 
 create table if not exists public.customer_interactions (
   id text primary key,
@@ -144,10 +146,13 @@ create table if not exists public.customer_interactions (
   assigned_to text not null default '',
   next_follow_up text not null default '',
   status text not null default 'Open',
+  cancellation_reason text not null default '',
   bill_id text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.customer_interactions add column if not exists cancellation_reason text not null default '';
 
 create table if not exists public.supplier_assignments (
   id text primary key,

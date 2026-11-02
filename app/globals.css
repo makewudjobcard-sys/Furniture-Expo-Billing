@@ -188,6 +188,9 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 .table-product small, .block-muted { color: #96887d; font-size: 9px; }
 .soft-tag, .stock-badge, .payment-status { display: inline-flex; padding: 5px 8px; border-radius: 999px; font-size: 9px; font-weight: 750; }
 .soft-tag { background: #eee7de; color: #6d5f55; }
+.status-billed { display:inline-flex; align-items:center; width:max-content; padding:4px 8px; border-radius:999px; background:#e3f4e9; color:#16734f; font-size:10px; font-weight:800; }
+.status-cancelled { display:inline-flex; align-items:center; width:max-content; padding:4px 8px; border-radius:999px; background:#fde3e0; color:#b9362c; font-size:10px; font-weight:800; }
+.frequency-alert { display:block; margin-top:4px; color:#b4672d; font-size:9px; font-weight:750; }
 .stock-badge { background: #e2efe7; color: var(--success); min-width: 31px; justify-content: center; }
 .stock-badge.low { background: #f6e2df; color: var(--danger); }
 .row-actions { display: flex; justify-content: flex-end; gap: 9px; }
@@ -200,7 +203,7 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 
 .bill-list { background: var(--surface); border: 1px solid var(--line); border-radius: 15px; overflow: hidden; box-shadow: 0 13px 35px rgba(73,51,36,.05); }
 .bill-row + .bill-row { border-top: 1px solid #e9e1d8; }
-.bill-row.cancelled { opacity: .62; }
+.bill-row.cancelled { border-color:#e4a29b; background:#fff5f3; }
 .bill-main { width: 100%; display: grid; grid-template-columns: 1fr 1.2fr 1fr 130px 18px; align-items: center; gap: 18px; padding: 17px 19px; border: 0; background: transparent; text-align: left; cursor: pointer; }
 .bill-main:hover { background: #faf6f0; }
 .bill-main > div { display: grid; gap: 4px; }
@@ -208,7 +211,7 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 .bill-main small { color: #93857a; font-size: 9px; }
 .payment-status.paid { width: fit-content; background: #e2efe7; color: var(--success); }
 .payment-status.due { width: fit-content; background: #f8ead8; color: #9a5e20; }
-.payment-status.cancelled { width: fit-content; background: #eee8e4; color: #786a60; }
+.payment-status.cancelled { width: fit-content; background: #fde3e0; color: #b9362c; }
 .bill-total { text-align: right; font-size: 15px !important; }
 .chevron { color: #a89b91; font-size: 24px; }
 
@@ -254,6 +257,11 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 .modal-head h2 { font-family: Georgia, serif; font-size: 28px; margin: 5px 0 0; }
 .modal-head > button { width: 34px; height: 34px; border: 1px solid var(--line); background: transparent; border-radius: 10px; cursor: pointer; font-size: 21px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 21px; padding-top: 17px; border-top: 1px solid var(--line); }
+.follow-up-conversion-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:18px; padding-top:15px; border-top:1px solid var(--line); }
+.follow-up-frequency-note { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid #f0d1a7; border-radius:11px; background:#fff8ea; color:#8d5b25; font-size:11px; }
+.follow-up-frequency-note strong { font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+.danger-outline { min-height:42px; padding:0 15px; border:1px solid #d27b72; border-radius:10px; background:#fff7f5; color:#b9362c; font-weight:800; cursor:pointer; }
+.danger-button { min-height:42px; padding:0 15px; border:0; border-radius:10px; background:#b9362c; color:#fff; font-weight:800; cursor:pointer; }
 .invoice-modal { width: min(720px, 100%); }
 .invoice-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px; background: #eee7de; border-radius: 12px; }
 .invoice-meta > div { display: grid; gap: 3px; }
@@ -343,11 +351,24 @@ td { padding: 13px 15px; border-top: 1px solid #ebe3da; color: #5f534a; font-siz
 .today-action { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: white; color: var(--clay); font-size: 8px; font-weight: 800; cursor: pointer; }
 .today-task-actions { display: flex; gap: 6px; }
 .today-task-actions .today-action { width: 34px; height: 34px; padding: 0; font-size: 18px; line-height: 1; }
+.follow-up-dashboard-actions { flex-wrap:wrap; justify-content:flex-end; }
+.follow-up-dashboard-actions .today-action { width:auto; min-width:42px; height:32px; padding:0 8px; font-size:10px; font-weight:800; }
+.follow-up-dashboard-actions .task-convert { background:#e3f4e9; color:#16734f; }
+.follow-up-dashboard-actions .task-cancel { background:#fde3e0; color:#b9362c; }
 .task-done { color: var(--success) !important; border-color: #a9cfb8 !important; background: #eff8f1 !important; }
 .task-unfinished { color: var(--danger) !important; border-color: #e2b7b2 !important; background: #fff2f0 !important; }
 .today-empty { padding: 20px; color: var(--success); font-size: 10px; }
 .today-planner footer { display: flex; justify-content: flex-end; gap: 7px; padding: 10px 13px; background: #f7f3ed; }
 .today-planner footer button { border: 0; background: transparent; color: var(--clay); font-size: 9px; font-weight: 750; cursor: pointer; }
+.cancellation-dashboard-card { margin-top:16px; }
+.outcome-counts { display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end; }
+.cancellation-dashboard-list { display:grid; gap:0; margin-top:12px; border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+.cancellation-dashboard-row { display:grid; grid-template-columns:minmax(0,1.2fr) auto minmax(110px,1fr); align-items:center; gap:12px; padding:11px 13px; border-bottom:1px solid var(--line); }
+.cancellation-dashboard-row:last-child { border-bottom:0; }
+.cancellation-dashboard-row > div { display:grid; gap:3px; min-width:0; }
+.cancellation-dashboard-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cancellation-dashboard-row small { color:var(--muted); font-size:10px; }
+.cancellation-dashboard-note { display:block; margin-top:9px; color:var(--muted); font-size:10px; }
 .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .dashboard-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: var(--shadow); }
 .card-heading { display: flex; justify-content: space-between; align-items: start; gap: 10px; margin-bottom: 14px; }

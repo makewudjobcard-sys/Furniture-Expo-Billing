@@ -126,14 +126,14 @@ type ExpoTask = {
   id: string; category: string; title: string; details: string; assignedTo: string;
   dueDate: string; priority: string; status: string; linkedBillId: string;
   linkedCustomerPhone: string; customerName: string; customerPhone: string; enquiredProducts: string;
-  attendedBy: string; commitmentDate: string; notes: string; completionReason: string;
+  attendedBy: string; commitmentDate: string; notes: string; completionReason: string; cancellationReason: string;
   createdAt: string; updatedAt: string;
 };
 type CurrentUser = { username: string; role: "md" | "client"; clientKey: string; label: string };
 type CustomerInteraction = {
   id: string; customerName: string; customerPhone: string; type: string;
   details: string; assignedTo: string; nextFollowUp: string; status: string;
-  billId: string; createdAt: string; updatedAt: string;
+  cancellationReason: string; billId: string; createdAt: string; updatedAt: string;
 };
 type SupplierAssignment = {
   id: string; billId: string; billNo: string; productId: string; productCode: string;
@@ -245,6 +245,7 @@ type DashboardAction = {
   perform?: () => void | Promise<unknown>;
   incomplete?: () => void;
   kind?: "task";
+  task?: ExpoTask;
   assignedTo?: string;
   updatedAt?: string;
 };
@@ -330,6 +331,20 @@ const taskTemplates = [
   { icon: "↗", key: "development", category: "Development", title: "Business development", details: "Review improvement ideas, staff needs and showroom growth work." },
   { icon: "₹", key: "financial", category: "Financial Commitment", title: "Payment commitment", details: "Record the payable/receivable amount and completion plan." },
 ];
+const cancellationReasons = ["Quality issue", "Product variety", "Price is too high", "Customer not ready", "No response", "Other"] as const;
+function isCustomerFollowUp(value: { category?: string; title?: string; type?: string }) {
+  const category = (value.category || value.type || "").toLowerCase();
+  const title = (value.title || "").toLowerCase();
+  return category === "follow-up" || category === "follow up" || title.includes("customer follow-up") || title.includes("customer follow up");
+}
+function followUpFrequency(priority?: string) {
+  switch ((priority || "Normal").toLowerCase()) {
+    case "urgent": return "Alert immediately";
+    case "high": return "Alert daily";
+    case "low": return "Alert weekly";
+    default: return "Alert every 3 days";
+  }
+}
 const themes: Array<{ id: ThemeName; label: string; colors: string[] }> = [
   { id: "teak", label: "Teak & Ivory", colors: ["#563a2c", "#fffaf0", "#b76a3c"] },
   { id: "forest", label: "Dark Green", colors: ["#17372d", "#ffffff", "#d96b3d"] },
@@ -557,6 +572,8 @@ export default function Home() {
   const [billingStep, setBillingStep] = useState<1 | 2 | 3>(1);
   const [draftBillNo, setDraftBillNo] = useState("Next bill number");
   const [draftOrderDate, setDraftOrderDate] = useState(() => isoDate());
+  const [conversionTaskId, setConversionTaskId] = useState("");
+  const [conversionInteractionId, setConversionInteractionId] = useState("");
   const [savedBillForJobCard, setSavedBillForJobCard] = useState<Bill | null>(null);
   const [density, setDensity] = useState<DensityName>("comfortable");
   const [fontName, setFontName] = useState<FontName>("system");
@@ -591,6 +608,9 @@ export default function Home() {
   const [taskTemplateKey, setTaskTemplateKey] = useState("");
   const [incompleteTask, setIncompleteTask] = useState<ExpoTask | null>(null);
   const [incompleteReason, setIncompleteReason] = useState("");
+  const [cancellationTarget, setCancellationTarget] = useState<{ kind: "task" | "interaction"; id: string; title: string } | null>(null);
+  const [cancellationReason, setCancellationReason] = useState<string>("");
+  const [cancellationOtherReason, setCancellationOtherReason] = useState("");
   const [interactionForm, setInteractionForm] = useState<Partial<CustomerInteraction>>({ type: "Follow-up", status: "Open" });
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -1143,6 +1163,8 @@ export default function Home() {
         action: "createBill",
         bill: {
           clientRequestId: requestId,
+          sourceTaskId: conversionTaskId,
+          sourceInteractionId: conversionInteractionId,
           customerName: customer.name,
           customerPhone: customer.phone,
           customerAddress: customer.address,
@@ -1186,6 +1208,8 @@ export default function Home() {
         return;
       }
       billRequestIdRef.current = "";
+      setConversionTaskId("");
+      setConversionInteractionId("");
       setDraftBillNo(created.billNo);
       setDraftOrderDate(created.createdAt.slice(0, 10));
       setSavedBillForJobCard(created);
@@ -1286,6 +1310,8 @@ export default function Home() {
       return;
     }
     clearBillingDraft();
+    setConversionTaskId("");
+    setConversionInteractionId("");
     setSavedBillForJobCard(null);
     setDraftOrderDate(isoDate());
     setDraftBillNo(nextBillNumber);
@@ -1735,6 +1761,39 @@ export default function Home() {
       setIncompleteReason("");
     }
   }
+  function askCancellation(target: { kind: "task" | "interaction"; id: string; title: string }) {
+    setCancellationTarget(target);
+    setCancellationReason("");
+    setCancellationOtherReason("");
+  }
+  async function saveCancellation(event: FormEvent) {
+    event.preventDefault();
+    if (!cancellationTarget) return;
+    const reason = cancellationReason === "Other" ? `Other: ${cancellationOtherReason.trim()}` : cancellationReason;
+    if (!cancellationReason || (cancellationReason === "Other" && !cancellationOtherReason.trim())) return notify("Choose a cancellation reason and enter the details.");
+    const action = cancellationTarget.kind === "task" ? "cancelTask" : "cancelInteraction";
+    const data = await mutate({ action, id: cancellationTarget.id, reason }, "Cancellation recorded with reason.");
+    if (data) {
+      setCancellationTarget(null);
+      setCancellationReason("");
+      setCancellationOtherReason("");
+    }
+  }
+  function convertFollowUpToBill(task: Partial<ExpoTask>, sourceKind: "task" | "interaction" = "task") {
+    if (currentUser?.role === "md") return notify("MD login is view-only. Open a showroom login to convert this enquiry into a bill.");
+    if (!task.customerName?.trim() || !task.customerPhone?.trim()) return notify("Customer name and phone number are required before converting to a bill.");
+    clearBillingDraft();
+    setConversionTaskId(sourceKind === "task" ? task.id || "" : "");
+    setConversionInteractionId(sourceKind === "interaction" ? task.id || "" : "");
+    setDraftOrderDate(isoDate());
+    setDraftBillNo(nextBillNumber);
+    setCustomer((current) => ({ ...current, name: task.customerName || "", phone: task.customerPhone || "", staffName: task.attendedBy || task.assignedTo || "", orderNotes: task.notes || task.details || "" }));
+    setTaskForm({ category: "Follow-up", priority: "Normal", status: "Pending" });
+    setShowTaskForm(false);
+    setActive("billing");
+    setBillingStep(1);
+    notify("Enquiry moved to billing. Select the products and save the bill.");
+  }
   async function saveInteraction(event: FormEvent) {
     event.preventDefault();
     const data = await mutate({ action: "saveInteraction", interaction: interactionForm }, interactionForm.id ? "Customer activity updated." : "Customer activity added.");
@@ -2091,11 +2150,14 @@ export default function Home() {
       (bill) => deliveryBucket(bill) === "delivered",
     ).length,
   };
-  const openTasks = state.tasks.filter((task) => task.status !== "Completed");
+  const openTasks = state.tasks.filter((task) => !["Completed", "Cancelled"].includes(task.status));
   const dueTasks = openTasks.filter((task) => !task.dueDate || task.dueDate <= isoDate());
-  const openInteractions = state.interactions.filter((item) => item.status !== "Closed");
+  const openInteractions = state.interactions.filter((item) => !["Closed", "Cancelled"].includes(item.status));
   const followUpsDue = openInteractions.filter((item) => item.nextFollowUp && item.nextFollowUp <= isoDate());
   const openComplaints = openInteractions.filter((item) => item.type === "Complaint");
+  const cancelledTasks = state.tasks.filter((task) => task.status === "Cancelled");
+  const cancelledInteractions = state.interactions.filter((item) => item.status === "Cancelled");
+  const cancelledBills = state.bills.filter((bill) => bill.status === "cancelled");
   const supplierOrdersOpen = state.supplierAssignments.filter((item) => !["Received", "Closed", "Cancelled"].includes(item.status));
   const supplierOrdersDelayed = supplierOrdersOpen.filter((item) => item.expectedDate && item.expectedDate < isoDate());
   const supplierPending = state.supplierAssignments.reduce((sum, item) => sum + Math.max(0, item.purchaseCost - item.advancePaid), 0);
@@ -2105,11 +2167,10 @@ export default function Home() {
       .map((bill) => ({ id: `delivery-${bill.id}`, group: "urgent" as const, icon: "⇢", title: `Delayed delivery · ${bill.customerName}`, detail: `${bill.billNo} · Expected ${bill.deliveryDate}`, action: "View order", open: () => setSelectedBill(bill) })),
     ...openComplaints.map((item) => ({ id: `complaint-${item.id}`, group: "urgent" as const, icon: "!", title: `Complaint · ${item.customerName}`, detail: item.details, action: "Resolve", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...supplierOrdersDelayed.map((item) => ({ id: `supplier-${item.id}`, group: "urgent" as const, icon: "◇", title: `Supplier delay · ${item.productName}`, detail: `${item.billNo} · Expected ${item.expectedDate}`, action: "Update", open: () => setActive("suppliers") })),
-    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: (["High", "Urgent"].includes(task.priority) ? "urgent" : "today") as "urgent" | "today", icon: "✓", title: task.title, detail: [task.category, task.assignedTo, task.customerName, task.customerPhone, task.enquiredProducts, task.commitmentDate ? `Commitment ${task.commitmentDate}` : ""].filter(Boolean).join(" · ") || "No task details", action: "Done", kind: "task" as const, assignedTo: task.assignedTo, updatedAt: task.updatedAt, open: () => { setTaskForm(task); setTaskCategoryLocked(false); setShowTaskForm(true); }, perform: () => mutate({ action: "saveTask", task: { ...task, status: "Completed", completionReason: "" } }, "Task completed. Open Completed history to view or reopen it."), incomplete: () => askTaskIncomplete(task) })),
+    ...dueTasks.map((task) => ({ id: `task-${task.id}`, group: (["High", "Urgent"].includes(task.priority) ? "urgent" : "today") as "urgent" | "today", icon: "✓", title: task.title, detail: [task.category, task.assignedTo, task.customerName, task.customerPhone, task.enquiredProducts, isCustomerFollowUp(task) ? followUpFrequency(task.priority) : "", task.commitmentDate ? `Commitment ${task.commitmentDate}` : ""].filter(Boolean).join(" · ") || "No task details", action: "Done", kind: "task" as const, task, assignedTo: task.assignedTo, updatedAt: task.updatedAt, open: () => { setTaskForm(task); setTaskCategoryLocked(false); setShowTaskForm(true); }, perform: () => mutate({ action: "saveTask", task: { ...task, status: "Completed", completionReason: "" } }, "Task completed. Open Completed history to view or reopen it."), incomplete: () => askTaskIncomplete(task) })),
     ...followUpsDue.filter((item) => item.type !== "Complaint").map((item) => ({ id: `follow-${item.id}`, group: "today" as const, icon: "☎", title: `${item.type} · ${item.customerName}`, detail: `${item.customerPhone}${item.details ? ` · ${item.details}` : ""}`, action: "Open", open: () => { setOperationsTab("customers"); setActive("operations"); } })),
     ...activeBills.filter((bill) => bill.deliveryStatus !== "Delivered" && bill.deliveryDate === isoDate()).map((bill) => ({ id: `today-delivery-${bill.id}`, group: "today" as const, icon: "⇢", title: `Delivery today · ${bill.customerName}`, detail: `${bill.billNo} · ${bill.customerPhone}`, action: "View", open: () => setSelectedBill(bill) })),
     ...activeBills.filter((bill) => bill.balanceAmount > 0).map((bill) => ({ id: `balance-${bill.id}`, group: "today" as const, icon: "₹", title: `Collect balance · ${bill.customerName}`, detail: `${bill.billNo} · ${money(bill.balanceAmount)}`, action: "Collect", open: () => setSelectedBill(bill) })),
-    ...state.products.filter((product) => product.stockQty <= 2).map((product) => ({ id: `stock-${product.id}`, group: "routine" as const, icon: "▦", title: `Low stock · ${product.name}`, detail: `${product.code} · ${product.stockQty > 0 ? `${product.stockQty} remaining` : "Out of stock"}`, action: "Stock", open: () => { setSearch(product.code); setStockFilter("all"); setActive("products"); } })),
   ];
   const dashboardActions = todayActionItems
     .filter((item) => !taskStaffFilter.length || (item.kind === "task" && taskStaffFilter.includes(item.assignedTo || "")))
@@ -2120,7 +2181,7 @@ export default function Home() {
     .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
   const taskStaffOptions = Array.from(new Set([...state.settings.staffNames, ...state.tasks.map((task) => task.assignedTo)].map((name) => name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const visibleTasks = state.tasks
-    .filter((task) => taskFilter === "all" || (taskFilter === "completed" ? task.status === "Completed" : task.status !== "Completed"))
+    .filter((task) => taskFilter === "all" || (taskFilter === "completed" ? task.status === "Completed" : !["Completed", "Cancelled"].includes(task.status)))
     .filter((task) => !taskStaffFilter.length || taskStaffFilter.includes(task.assignedTo))
     .sort((a, b) => {
       if (taskSort === "assigned") return (a.assignedTo || "Unassigned").localeCompare(b.assignedTo || "Unassigned") || (b.updatedAt || "").localeCompare(a.updatedAt || "");
@@ -2333,6 +2394,7 @@ export default function Home() {
               <div className="today-count"><strong>{todayActionItems.length}</strong><span>actions pending</span><small>{completedToday} completed today</small></div>
               <div className="today-summary"><span><b>{money(todaySales)}</b>Today sales</span><span><b>{money(pendingAmount)}</b>To collect</span><span><b>{deliveryCounts.today}</b>Today deliveries</span><span><b>{totalStock}</b>Ready stock</span></div>
             </div>
+            {currentUser?.role === "md" && <article className="dashboard-card cancellation-dashboard-card"><div className="card-heading"><div><span className="eyebrow">MD enquiry outcomes</span><h2>Bills converted and cancellations</h2><p>Every customer follow-up is visible here with its final outcome and reason.</p></div><div className="outcome-counts"><span className="status-billed">{state.tasks.filter((task) => isCustomerFollowUp(task) && task.linkedBillId).length} bills</span><span className="status-cancelled">{cancelledTasks.length + cancelledInteractions.length} cancelled</span></div></div><div className="cancellation-dashboard-list">{[...state.tasks.filter((task) => isCustomerFollowUp(task) && (task.linkedBillId || task.status === "Cancelled")).map((task) => { const bill = state.bills.find((row) => row.id === task.linkedBillId); return { id: `task-${task.id}`, customer: task.customerName || task.title, phone: task.customerPhone, outcome: task.linkedBillId ? `Bill converted · ${bill?.billNo || "Saved bill"}` : "Cancelled", reason: task.cancellationReason || "—", billed: Boolean(task.linkedBillId) }; }), ...cancelledInteractions.map((item) => ({ id: `interaction-${item.id}`, customer: item.customerName, phone: item.customerPhone, outcome: "Cancelled", reason: item.cancellationReason || "—", billed: false }))].slice(0, 12).map((item) => <div className="cancellation-dashboard-row" key={item.id}><div><strong>{item.customer}</strong><small>{item.phone || "No phone"}</small></div><span className={item.billed ? "status-billed" : "status-cancelled"}>{item.outcome}</span><small>{item.billed ? "" : item.reason}</small></div>)}{!cancelledTasks.length && !cancelledInteractions.length && !state.tasks.some((task) => isCustomerFollowUp(task) && task.linkedBillId) && <div className="today-empty">No converted or cancelled customer follow-ups yet.</div>}</div><small className="cancellation-dashboard-note">Cancelled bills in Orders are also counted: {cancelledBills.length}</small></article>}
             <section className="quick-plan">
               <div className="quick-plan-copy">
                 <span className="eyebrow">Quick plan</span>
@@ -2353,16 +2415,15 @@ export default function Home() {
               {([
                 ["urgent", "Urgent", "No urgent issues. Everything is under control."],
                 ["today", "Today", "No scheduled work for today."],
-                ["routine", "Stock check", "Stock levels look healthy."],
               ] as const).map(([group, label, empty]) => {
                 const rows = dashboardActions.filter((item) => item.group === group);
                 return <section className={`today-group ${group}`} key={group}>
                   <header><div><span className="today-dot" /><h2>{label}</h2></div><strong>{rows.length}</strong></header>
                   <div className="today-list">
-                    {rows.slice(0, group === "routine" ? 5 : 8).map((item) => <div className="today-item" key={item.id}>
+                    {rows.slice(0, 8).map((item) => <div className="today-item" key={item.id}>
                       <span className="today-icon">{item.icon}</span>
                       <button className="today-copy" onClick={item.open}><strong>{item.title}</strong><small>{item.detail}</small></button>
-                      {item.kind === "task" ? <div className="today-task-actions"><button className="today-action task-done" aria-label={`Mark ${item.title} complete`} onClick={() => (item.perform || item.open)()}>✓</button><button className="today-action task-unfinished" aria-label={`Mark ${item.title} unfinished`} onClick={() => item.incomplete?.()}>×</button></div> : <button className="today-action" onClick={() => (item.perform || item.open)()}>{item.action} →</button>}
+                      {item.kind === "task" && item.task && isCustomerFollowUp(item.task) ? <div className="today-task-actions follow-up-dashboard-actions"><button className="today-action" onClick={item.open}>Open</button><button className="today-action" onClick={item.open}>Edit</button>{!item.task.linkedBillId && !["Completed", "Cancelled"].includes(item.task.status) && <><button className="today-action task-convert" onClick={() => convertFollowUpToBill(item.task!)}>Bill</button><button className="today-action task-cancel" onClick={() => askCancellation({ kind: "task", id: item.task!.id, title: item.task!.title })}>Cancel</button></>} </div> : item.kind === "task" ? <div className="today-task-actions"><button className="today-action task-done" aria-label={`Mark ${item.title} complete`} onClick={() => (item.perform || item.open)()}>✓</button><button className="today-action task-unfinished" aria-label={`Mark ${item.title} unfinished`} onClick={() => item.incomplete?.()}>×</button></div> : <button className="today-action" onClick={() => (item.perform || item.open)()}>{item.action} →</button>}
                     </div>)}
                     {!rows.length && <div className="today-empty">✓ {empty}</div>}
                   </div>
@@ -3318,16 +3379,16 @@ export default function Home() {
                 <button className={taskFilter === "all" ? "active" : ""} onClick={() => setTaskFilter("all")}>All <span>{state.tasks.length}</span></button>
               </div><div className="task-sort-controls"><label>Sort tasks<select value={taskSort} onChange={(event) => setTaskSort(event.target.value as typeof taskSort)}><option value="newest">New to old</option><option value="assigned">Assigned staff A–Z</option><option value="due">Due date</option></select></label><label>Staff filter<select multiple size={Math.min(4, Math.max(2, taskStaffOptions.length))} value={taskStaffFilter} onChange={(event) => setTaskStaffFilter(Array.from(event.target.selectedOptions, (option) => option.value))}>{taskStaffOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>{taskStaffFilter.length > 0 && <button className="text-button" onClick={() => setTaskStaffFilter([])}>Clear staff</button>}</div></div><div className="table-wrap"><table><thead><tr><th>Task</th><th>Customer / enquiry</th><th>Category</th><th>Assigned</th><th>Commitment</th><th>Priority</th><th>Status</th><th /></tr></thead><tbody>
                 {visibleTasks.map((task) => <tr key={task.id} className={task.status !== "Completed" && task.dueDate && task.dueDate < isoDate() ? "overdue-row" : ""}>
-                  <td><strong>{task.title}</strong><small className="block-muted">{task.details || "No details"}{task.notes ? ` · Notes: ${task.notes}` : ""}{task.completionReason ? ` · Reason: ${task.completionReason}` : ""}</small></td><td><strong>{task.customerName || "—"}</strong><small className="block-muted">{[task.customerPhone, task.enquiredProducts, task.attendedBy ? `Attended by ${task.attendedBy}` : ""].filter(Boolean).join(" · ")}</small></td><td>{task.category}</td><td><span className="assigned-chip">{task.assignedTo || "Unassigned"}</span></td><td>{task.commitmentDate || task.dueDate || "Not set"}</td><td><span className={`priority ${task.priority.toLowerCase()}`}>{task.priority}</span></td><td>{task.status}</td>
-                  <td><div className="row-actions task-row-actions"><button className="task-icon-button task-done" aria-label={task.status === "Completed" ? "Reopen task" : "Mark task complete"} onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed", completionReason: task.status === "Completed" ? task.completionReason : "" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "↻" : "✓"}</button>{task.status !== "Completed" && <button className="task-icon-button task-unfinished" aria-label="Mark task unfinished" onClick={() => askTaskIncomplete(task)}>×</button>}<button onClick={() => { setTaskCategoryLocked(false); setTaskTemplateKey(""); setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></div></td>
+                  <td><strong>{task.title}</strong><small className="block-muted">{task.details || "No details"}{task.notes ? ` · Notes: ${task.notes}` : ""}{task.completionReason ? ` · Reason: ${task.completionReason}` : ""}{task.cancellationReason ? ` · Cancellation: ${task.cancellationReason}` : ""}</small></td><td><strong>{task.customerName || "—"}</strong><small className="block-muted">{[task.customerPhone, task.enquiredProducts, task.attendedBy ? `Attended by ${task.attendedBy}` : ""].filter(Boolean).join(" · ")}</small></td><td>{task.category}</td><td><span className="assigned-chip">{task.assignedTo || "Unassigned"}</span></td><td>{task.commitmentDate || task.dueDate || "Not set"}</td><td><span className={`priority ${task.priority.toLowerCase()}`}>{task.priority}</span>{isCustomerFollowUp(task) && <small className="frequency-alert">{followUpFrequency(task.priority)}</small>}</td><td><span className={task.status === "Cancelled" ? "status-cancelled" : task.linkedBillId ? "status-billed" : ""}>{task.status}</span></td>
+                  <td><div className="row-actions task-row-actions">{isCustomerFollowUp(task) ? <><button onClick={() => { setTaskCategoryLocked(false); setTaskTemplateKey(""); setTaskForm(task); setShowTaskForm(true); }}>Open</button><button onClick={() => { setTaskCategoryLocked(false); setTaskTemplateKey(""); setTaskForm(task); setShowTaskForm(true); }}>Edit</button>{!task.linkedBillId && !["Completed", "Cancelled"].includes(task.status) && <><button className="primary-small" onClick={() => convertFollowUpToBill(task)}>Convert to bill</button><button className="danger-link" onClick={() => askCancellation({ kind: "task", id: task.id, title: task.title })}>Cancel</button></>}</> : <><button className="task-icon-button task-done" aria-label={task.status === "Completed" ? "Reopen task" : "Mark task complete"} onClick={() => mutate({ action: "saveTask", task: { ...task, status: task.status === "Completed" ? "Pending" : "Completed", completionReason: task.status === "Completed" ? task.completionReason : "" } }, task.status === "Completed" ? "Task reopened." : "Task completed.")}>{task.status === "Completed" ? "↻" : "✓"}</button>{task.status !== "Completed" && <button className="task-icon-button task-unfinished" aria-label="Mark task unfinished" onClick={() => askTaskIncomplete(task)}>×</button>}<button onClick={() => { setTaskCategoryLocked(false); setTaskTemplateKey(""); setTaskForm(task); setShowTaskForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteTask", id: task.id }, "Task deleted.")}>Delete</button></>}</div></td>
                 </tr>)}
                 {!visibleTasks.length && <tr><td colSpan={8} className="empty-table">{taskFilter === "completed" ? "No completed tasks yet. Finished work will remain here." : taskFilter === "active" ? "No active tasks. Add a showroom activity or reopen one from Completed." : "No tasks yet. Add your first showroom activity."}</td></tr>}
               </tbody></table></div></>
             ) : operationsTab === "customers" ? (
               <div className="table-wrap"><table><thead><tr><th>Customer</th><th>Type</th><th>Details</th><th>Assigned</th><th>Next follow-up</th><th>Status</th><th /></tr></thead><tbody>
-                {state.interactions.map((item) => { const priorBills = activeBills.filter((bill) => normalizePhone(bill.customerPhone) === normalizePhone(item.customerPhone)); return <tr key={item.id} className={item.status !== "Closed" && item.nextFollowUp && item.nextFollowUp < isoDate() ? "overdue-row" : ""}>
-                  <td><strong>{item.customerName}</strong><small className="block-muted">{item.customerPhone} · {priorBills.length ? `Existing · ${priorBills.length} bill${priorBills.length > 1 ? "s" : ""}` : "New customer"}</small></td><td><span className={`interaction-type ${item.type.toLowerCase().replace(/\s+/g, "-")}`}>{item.type}</span></td><td>{item.details || "—"}</td><td>{item.assignedTo || "—"}</td><td>{item.nextFollowUp || "Not set"}</td><td>{item.status}</td>
-                  <td><div className="row-actions"><button onClick={() => mutate({ action: "saveInteraction", interaction: { ...item, status: item.status === "Closed" ? "Open" : "Closed" } }, item.status === "Closed" ? "Activity reopened." : "Activity closed.")}>{item.status === "Closed" ? "Reopen" : "Close"}</button><button onClick={() => { setInteractionForm(item); setShowInteractionForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteInteraction", id: item.id }, "Customer activity deleted.")}>Delete</button></div></td>
+                {state.interactions.map((item) => { const priorBills = activeBills.filter((bill) => normalizePhone(bill.customerPhone) === normalizePhone(item.customerPhone)); const followUp = isCustomerFollowUp(item); return <tr key={item.id} className={item.status !== "Closed" && item.status !== "Cancelled" && item.nextFollowUp && item.nextFollowUp < isoDate() ? "overdue-row" : ""}>
+                  <td><strong>{item.customerName}</strong><small className="block-muted">{item.customerPhone} · {priorBills.length ? `Existing · ${priorBills.length} bill${priorBills.length > 1 ? "s" : ""}` : "New customer"}{item.cancellationReason ? ` · Cancellation: ${item.cancellationReason}` : ""}</small></td><td><span className={`interaction-type ${item.type.toLowerCase().replace(/\s+/g, "-")}`}>{item.type}</span></td><td>{item.details || "—"}</td><td>{item.assignedTo || "—"}</td><td>{item.nextFollowUp || "Not set"}</td><td><span className={item.status === "Cancelled" ? "status-cancelled" : item.billId ? "status-billed" : ""}>{item.status}</span></td>
+                  <td><div className="row-actions">{followUp ? <><button onClick={() => { setInteractionForm(item); setShowInteractionForm(true); }}>Open</button><button onClick={() => { setInteractionForm(item); setShowInteractionForm(true); }}>Edit</button>{!item.billId && item.status !== "Cancelled" && <><button className="primary-small" onClick={() => convertFollowUpToBill({ id: item.id, category: "Follow-up", title: "Customer follow-up", customerName: item.customerName, customerPhone: item.customerPhone, assignedTo: item.assignedTo, details: item.details }, "interaction")}>Convert to bill</button><button className="danger-link" onClick={() => askCancellation({ kind: "interaction", id: item.id, title: item.customerName })}>Cancel</button></>}</> : <><button onClick={() => mutate({ action: "saveInteraction", interaction: { ...item, status: item.status === "Closed" ? "Open" : "Closed" } }, item.status === "Closed" ? "Activity reopened." : "Activity closed.")}>{item.status === "Closed" ? "Reopen" : "Close"}</button><button onClick={() => { setInteractionForm(item); setShowInteractionForm(true); }}>Edit</button><button className="danger-link" onClick={() => mutate({ action: "deleteInteraction", id: item.id }, "Customer activity deleted.")}>Delete</button></>}</div></td>
                 </tr>})}
                 {!state.interactions.length && <tr><td colSpan={7} className="empty-table">No customer follow-ups, enquiries or complaints yet.</td></tr>}
               </tbody></table></div>
@@ -4413,10 +4474,12 @@ export default function Home() {
             <label className="wide customer-notes-field">{taskTemplateKey === "cleaning" ? "Cleaning notes" : taskTemplateKey === "development" ? "Development notes" : taskTemplateKey === "financial" ? "Payment notes" : "Customer notes"}<textarea rows={3} value={taskForm.notes || ""} onChange={(event) => setTaskForm({ ...taskForm, notes: event.target.value })} placeholder={taskTemplateKey === "cleaning" ? "Record the cleaning work, issue or materials needed…" : taskTemplateKey === "development" ? "Record the improvement, decision or next action…" : taskTemplateKey === "financial" ? "Record the commitment, amount or payment plan…" : "Customer requirement, promised action or follow-up notes…"} /></label>
             {!taskCategoryLocked && <label>Category<select value={taskForm.category || "Follow-up"} onChange={(event) => setTaskForm({ ...taskForm, category: event.target.value })}>{["Follow-up", "Cleaning", "Marketing", "Development", "Recruitment", "Financial Commitment", "Financial", "Delivery", "Complaint", "General"].map((item) => <option key={item}>{item}</option>)}</select></label>}
             <label>Priority<select value={taskForm.priority || "Normal"} onChange={(event) => setTaskForm({ ...taskForm, priority: event.target.value })}><option>Low</option><option>Normal</option><option>High</option><option>Urgent</option></select></label>
+            {isCustomerFollowUp(taskForm) && <div className="wide follow-up-frequency-note"><strong>Reminder frequency</strong><span>{followUpFrequency(taskForm.priority)} based on this priority.</span></div>}
             {!taskCategoryLocked && <label className="wide">Details<textarea rows={3} value={taskForm.details || ""} onChange={(event) => setTaskForm({ ...taskForm, details: event.target.value })} /></label>}
-            {!taskCategoryLocked && <label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Incomplete</option><option>Completed</option></select></label>}
+            {!taskCategoryLocked && <label>Status<select value={taskForm.status || "Pending"} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value })}><option>Pending</option><option>In progress</option><option>Incomplete</option><option>Completed</option>{taskForm.status === "Cancelled" && <option>Cancelled</option>}</select></label>}
           </div>
-          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowTaskForm(false)}>Cancel</button><button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save task once"}</button></div>
+          {isCustomerFollowUp(taskForm) && taskForm.id && !taskForm.linkedBillId && !["Completed", "Cancelled"].includes(taskForm.status || "") && <div className="follow-up-conversion-actions"><button type="button" className="secondary-action" onClick={() => convertFollowUpToBill(taskForm)}>Convert to bill</button><button type="button" className="danger-outline" onClick={() => askCancellation({ kind: "task", id: taskForm.id || "", title: taskForm.title || "Customer follow-up" })}>Cancel enquiry</button></div>}
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowTaskForm(false)}>Close</button><button className="primary-small" disabled={busy}>{busy ? "Saving…" : "Save / update"}</button></div>
         </form></div>
       )}
 
@@ -4425,6 +4488,15 @@ export default function Home() {
           <div className="modal-head"><div><span className="eyebrow">Task unfinished</span><h2>Why is this task not complete?</h2><small>{incompleteTask.title}</small></div><button type="button" onClick={() => { setIncompleteTask(null); setIncompleteReason(""); }}>×</button></div>
           <label className="reason-field">Reason<textarea rows={4} autoFocus value={incompleteReason} onChange={(event) => setIncompleteReason(event.target.value)} placeholder="Add a clear reason so the team knows what to do next…" required /></label>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => { setIncompleteTask(null); setIncompleteReason(""); }}>Cancel</button><button className="primary-small" disabled={busy || !incompleteReason.trim()}>Save unfinished reason</button></div>
+        </form></div>
+      )}
+
+      {cancellationTarget && (
+        <div className="modal-backdrop"><form className="modal-card task-reason-modal cancellation-modal" onSubmit={saveCancellation}>
+          <div className="modal-head"><div><span className="eyebrow">Customer follow-up</span><h2>Why was this cancelled?</h2><small>{cancellationTarget.title}</small></div><button type="button" onClick={() => setCancellationTarget(null)}>×</button></div>
+          <label className="reason-field">Cancellation reason<select value={cancellationReason} onChange={(event) => setCancellationReason(event.target.value)} required><option value="">Choose a reason</option>{cancellationReasons.map((reason) => <option key={reason}>{reason}</option>)}</select></label>
+          {cancellationReason === "Other" && <label className="reason-field">Other reason<textarea rows={3} autoFocus value={cancellationOtherReason} onChange={(event) => setCancellationOtherReason(event.target.value)} placeholder="Type the cancellation reason…" required /></label>}
+          <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setCancellationTarget(null)}>Back</button><button className="danger-button" disabled={busy || !cancellationReason || (cancellationReason === "Other" && !cancellationOtherReason.trim())}>Save cancellation</button></div>
         </form></div>
       )}
 
@@ -4437,7 +4509,7 @@ export default function Home() {
             <label>Activity type<select value={interactionForm.type || "Follow-up"} onChange={(event) => setInteractionForm({ ...interactionForm, type: event.target.value })}>{["Enquiry", "Follow-up", "Order Follow-up", "Happy Call", "Complaint", "Service Call", "New Service"].map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Next follow-up<input type="date" value={interactionForm.nextFollowUp || ""} onChange={(event) => setInteractionForm({ ...interactionForm, nextFollowUp: event.target.value })} /></label>
             <label>Assigned staff<input list="crm-staff" value={interactionForm.assignedTo || ""} onChange={(event) => setInteractionForm({ ...interactionForm, assignedTo: event.target.value })} /><datalist id="crm-staff">{state.settings.staffNames.map((name) => <option key={name} value={name} />)}</datalist></label>
-            <label>Status<select value={interactionForm.status || "Open"} onChange={(event) => setInteractionForm({ ...interactionForm, status: event.target.value })}><option>Open</option><option>In progress</option><option>Closed</option></select></label>
+            <label>Status<select value={interactionForm.status || "Open"} onChange={(event) => setInteractionForm({ ...interactionForm, status: event.target.value })}><option>Open</option><option>In progress</option>{(interactionForm.type !== "Follow-up" || interactionForm.status === "Closed") && <option>Closed</option>}{interactionForm.status === "Cancelled" && <option>Cancelled</option>}</select></label>
             <label className="wide follow-up-notes-field">Notes<textarea rows={4} value={interactionForm.details || ""} onChange={(event) => setInteractionForm({ ...interactionForm, details: event.target.value })} placeholder="Add the customer’s requirement, conversation summary or next action…" required /></label>
           </div>
           <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setShowInteractionForm(false)}>Cancel</button><button className="primary-small">Save activity</button></div>

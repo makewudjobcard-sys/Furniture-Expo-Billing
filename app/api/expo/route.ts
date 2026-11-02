@@ -20,9 +20,9 @@ type TaskInput = {
   id?: string; category?: string; title?: string; details?: string; assignedTo?: string;
   dueDate?: string; priority?: string; status?: string; linkedBillId?: string; linkedCustomerPhone?: string;
   customerName?: string; customerPhone?: string; enquiredProducts?: string; attendedBy?: string;
-  commitmentDate?: string; notes?: string; completionReason?: string;
+  commitmentDate?: string; notes?: string; completionReason?: string; cancellationReason?: string;
 };
-type InteractionInput = { id?: string; customerName?: string; customerPhone?: string; type?: string; details?: string; assignedTo?: string; nextFollowUp?: string; status?: string; billId?: string };
+type InteractionInput = { id?: string; customerName?: string; customerPhone?: string; type?: string; details?: string; assignedTo?: string; nextFollowUp?: string; status?: string; billId?: string; cancellationReason?: string };
 type AssignmentInput = { id?: string; billId?: string; billNo?: string; productId?: string; productCode?: string; productName?: string; qty?: number; supplierId?: string; purchaseCost?: number; advancePaid?: number; expectedDate?: string; status?: string; notes?: string };
 type LeadInput = { id?: string; customerName?: string; phone?: string; source?: string; interest?: string; assignedTo?: string; followUpDate?: string; status?: string; notes?: string };
 type JobCardInput = { id?: string; jobNo?: string; customerName?: string; phone?: string; billId?: string; measurements?: string; woodMaterial?: string; fabric?: string; foam?: string; polish?: string; referenceImages?: string[]; estimatedCost?: number; assignedTo?: string; expectedDate?: string; stage?: string; notes?: string };
@@ -63,7 +63,7 @@ async function nextProductCode(clientKey: string, category: unknown, name: unkno
   return `${date}-${productCodePart(category, "PROD")}-${productCodePart(name, "ITEM")}-${String(row?.value || Date.now()).padStart(3, "0")}`;
 }
 
-async function ensureColumn(table: "products" | "bills" | "settings" | "tasks", column: string, definition: string) {
+async function ensureColumn(table: "products" | "bills" | "settings" | "tasks" | "customer_interactions", column: string, definition: string) {
   const info = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
   if (!info.results.some((item: { name: string }) => item.name === column)) {
     await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
@@ -147,6 +147,8 @@ async function ensureSchema() {
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS commitment_date TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''"),
     db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_reason TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS cancellation_reason TEXT NOT NULL DEFAULT ''"),
+    db.prepare("ALTER TABLE customer_interactions ADD COLUMN IF NOT EXISTS cancellation_reason TEXT NOT NULL DEFAULT ''"),
     ]);
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)").run();
     await db.prepare(`INSERT OR IGNORE INTO settings (id,business_name,subtitle,gst_rate,bill_prefix) VALUES (1,'Smaarthome Furniture','Showroom Billing & Operations',18,'SHF')`).run();
@@ -247,7 +249,7 @@ async function ensureSchema() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_job_cards_expected ON job_cards(expected_date)"),
   ]);
 
-  const additions: Array<["products" | "bills" | "settings" | "tasks", string, string]> = [
+  const additions: Array<["products" | "bills" | "settings" | "tasks" | "customer_interactions", string, string]> = [
     ["products", "image_key", "TEXT NOT NULL DEFAULT ''"], ["products", "client_key", "TEXT NOT NULL DEFAULT 'SHF'"],
     ["products", "cost_segment", "TEXT NOT NULL DEFAULT ''"], ["products", "comfort_tag", "TEXT NOT NULL DEFAULT ''"],
     ["products", "material_tag", "TEXT NOT NULL DEFAULT ''"], ["products", "look_tag", "TEXT NOT NULL DEFAULT ''"],
@@ -272,7 +274,8 @@ async function ensureSchema() {
     ["tasks", "customer_name", "TEXT NOT NULL DEFAULT ''"], ["tasks", "customer_phone", "TEXT NOT NULL DEFAULT ''"],
     ["tasks", "enquired_products", "TEXT NOT NULL DEFAULT ''"], ["tasks", "attended_by", "TEXT NOT NULL DEFAULT ''"],
     ["tasks", "commitment_date", "TEXT NOT NULL DEFAULT ''"], ["tasks", "notes", "TEXT NOT NULL DEFAULT ''"],
-    ["tasks", "completion_reason", "TEXT NOT NULL DEFAULT ''"],
+    ["tasks", "completion_reason", "TEXT NOT NULL DEFAULT ''"], ["tasks", "cancellation_reason", "TEXT NOT NULL DEFAULT ''"],
+    ["customer_interactions", "cancellation_reason", "TEXT NOT NULL DEFAULT ''"],
   ];
   for (const [table, column, definition] of additions) await ensureColumn(table, column, definition);
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_bills_delivery_date ON bills(delivery_date)").run();
@@ -349,10 +352,10 @@ async function readState(scopeKey = "all") {
     env.DB.prepare(`SELECT id,category,title,details,assigned_to AS assignedTo,due_date AS dueDate,priority,status,
       linked_bill_id AS linkedBillId,linked_customer_phone AS linkedCustomerPhone,customer_name AS customerName,
       customer_phone AS customerPhone,enquired_products AS enquiredProducts,attended_by AS attendedBy,
-      commitment_date AS commitmentDate,notes,completion_reason AS completionReason,created_at AS createdAt,
+      commitment_date AS commitmentDate,notes,completion_reason AS completionReason,cancellation_reason AS cancellationReason,created_at AS createdAt,
       updated_at AS updatedAt FROM tasks ORDER BY CASE status WHEN 'Completed' THEN 1 ELSE 0 END,due_date,created_at DESC`).all(),
     env.DB.prepare(`SELECT id,customer_name AS customerName,customer_phone AS customerPhone,type,details,
-      assigned_to AS assignedTo,next_follow_up AS nextFollowUp,status,bill_id AS billId,created_at AS createdAt,
+      assigned_to AS assignedTo,next_follow_up AS nextFollowUp,status,cancellation_reason AS cancellationReason,bill_id AS billId,created_at AS createdAt,
       updated_at AS updatedAt FROM customer_interactions ORDER BY CASE status WHEN 'Closed' THEN 1 ELSE 0 END,next_follow_up,created_at DESC`).all(),
     env.DB.prepare(`SELECT id,bill_id AS billId,bill_no AS billNo,product_id AS productId,product_code AS productCode,
       product_name AS productName,qty,supplier_id AS supplierId,purchase_cost AS purchaseCost,advance_paid AS advancePaid,
@@ -461,8 +464,8 @@ function auditDescription(action: string, payload: Record<string, unknown>) {
     updateBill: `Order details updated`, updateBillDetails: `Order details updated`, removeBillItem: `Product removed from order`, addPayment: `Payment recorded`, cancelBill: `Order cancelled`,
     setDelivery: `Delivery completion changed`, setDeliveryStatus: `Delivery moved to ${clean(payload.deliveryStatus, "new status")}`,
     saveProduct: `Product ${clean(product.code)} saved`, deleteProduct: `Product removed`, adjustStock: `Stock quantity adjusted`,
-    saveTask: `Task ${clean(task.title)} saved`, deleteTask: `Task removed`,
-    saveInteraction: `${clean(interaction.type, "Customer activity")} saved`, deleteInteraction: `Customer activity removed`,
+    saveTask: `Task ${clean(task.title)} saved`, deleteTask: `Task removed`, cancelTask: `Customer follow-up cancelled`,
+    saveInteraction: `${clean(interaction.type, "Customer activity")} saved`, deleteInteraction: `Customer activity removed`, cancelInteraction: `Customer follow-up cancelled`,
     saveSupplier: `Supplier saved`, deleteSupplier: `Supplier removed`, saveSupplierAssignments: `Supplier assignment updated`,
     deleteSupplierAssignment: `Supplier assignment removed`, saveSettings: `Showroom settings updated`,
     saveLead: `Lead ${clean(lead.customerName, "customer")} saved`, deleteLead: `Lead removed`,
@@ -688,6 +691,14 @@ export async function POST(request: Request) {
           clean(bill.deliveryDate), "Order Booked", clean(bill.orderNotes), clean(bill.accountantName), clean(bill.managerName),
           "order_slip", "confirmed", clientRequestId).run();
       if (!inserted.meta.changes) return Response.json(await readState(user.clientKey), { headers: { "Cache-Control": "no-store" } });
+      const sourceTaskId = clean(bill.sourceTaskId);
+      if (sourceTaskId) {
+        await env.DB.prepare("UPDATE tasks SET linked_bill_id=?,status='Completed',completion_reason='',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(billId, sourceTaskId).run();
+      }
+      const sourceInteractionId = clean(bill.sourceInteractionId);
+      if (sourceInteractionId) {
+        await env.DB.prepare("UPDATE customer_interactions SET bill_id=?,status='Closed',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(billId, sourceInteractionId).run();
+      }
       const deliveryDate = clean(bill.deliveryDate);
       const followUpDate = new Date(now.getTime() + 86400000).toISOString().slice(0, 10);
       const followUpStatements = [
@@ -906,34 +917,42 @@ export async function POST(request: Request) {
           clean(value.customerPhone), clean(value.enquiredProducts), clean(value.attendedBy), clean(value.commitmentDate)).first<{ id: string }>();
       if (duplicate) return Response.json({ error: "This exact task is already saved. Open the existing task instead of creating a duplicate." }, { status: 409 });
       await env.DB.prepare(`INSERT INTO tasks
-        (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,customer_name,customer_phone,enquired_products,attended_by,commitment_date,notes,completion_reason,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        (id,category,title,details,assigned_to,due_date,priority,status,linked_bill_id,linked_customer_phone,customer_name,customer_phone,enquired_products,attended_by,commitment_date,notes,completion_reason,cancellation_reason,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET category=excluded.category,title=excluded.title,details=excluded.details,
         assigned_to=excluded.assigned_to,due_date=excluded.due_date,priority=excluded.priority,status=excluded.status,
         linked_bill_id=excluded.linked_bill_id,linked_customer_phone=excluded.linked_customer_phone,
         customer_name=excluded.customer_name,customer_phone=excluded.customer_phone,enquired_products=excluded.enquired_products,
         attended_by=excluded.attended_by,commitment_date=excluded.commitment_date,notes=excluded.notes,
-        completion_reason=excluded.completion_reason,updated_at=CURRENT_TIMESTAMP`)
+        completion_reason=excluded.completion_reason,cancellation_reason=excluded.cancellation_reason,updated_at=CURRENT_TIMESTAMP`)
         .bind(id, clean(value.category, "General"), clean(value.title), clean(value.details), clean(value.assignedTo), clean(value.dueDate),
           clean(value.priority, "Normal"), clean(value.status, "Pending"), clean(value.linkedBillId), clean(value.linkedCustomerPhone),
           clean(value.customerName), clean(value.customerPhone), clean(value.enquiredProducts), clean(value.attendedBy),
-          clean(value.commitmentDate), clean(value.notes), clean(value.completionReason)).run();
+          clean(value.commitmentDate), clean(value.notes), clean(value.completionReason), clean(value.cancellationReason)).run();
     } else if (action === "deleteTask") {
       await env.DB.prepare("DELETE FROM tasks WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "cancelTask") {
+      const reason = clean(payload.reason);
+      if (!reason) return Response.json({ error: "Cancellation reason is required." }, { status: 400 });
+      await env.DB.prepare("UPDATE tasks SET status='Cancelled',cancellation_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(reason, clean(payload.id)).run();
     } else if (action === "saveInteraction") {
       const value = payload.interaction as InteractionInput;
       if (!clean(value?.customerName) || !clean(value?.customerPhone)) return Response.json({ error: "Customer name and phone are required." }, { status: 400 });
       const id = clean(value.id) || uid("crm");
       await env.DB.prepare(`INSERT INTO customer_interactions
-        (id,customer_name,customer_phone,type,details,assigned_to,next_follow_up,status,bill_id,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        (id,customer_name,customer_phone,type,details,assigned_to,next_follow_up,status,cancellation_reason,bill_id,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET customer_name=excluded.customer_name,customer_phone=excluded.customer_phone,
         type=excluded.type,details=excluded.details,assigned_to=excluded.assigned_to,next_follow_up=excluded.next_follow_up,
-        status=excluded.status,bill_id=excluded.bill_id,updated_at=CURRENT_TIMESTAMP`)
+        status=excluded.status,cancellation_reason=excluded.cancellation_reason,bill_id=excluded.bill_id,updated_at=CURRENT_TIMESTAMP`)
         .bind(id, clean(value.customerName), clean(value.customerPhone), clean(value.type, "Follow-up"), clean(value.details),
-          clean(value.assignedTo), clean(value.nextFollowUp), clean(value.status, "Open"), clean(value.billId)).run();
+          clean(value.assignedTo), clean(value.nextFollowUp), clean(value.status, "Open"), clean(value.cancellationReason), clean(value.billId)).run();
     } else if (action === "deleteInteraction") {
       await env.DB.prepare("DELETE FROM customer_interactions WHERE id=?").bind(clean(payload.id)).run();
+    } else if (action === "cancelInteraction") {
+      const reason = clean(payload.reason);
+      if (!reason) return Response.json({ error: "Cancellation reason is required." }, { status: 400 });
+      await env.DB.prepare("UPDATE customer_interactions SET status='Cancelled',cancellation_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(reason, clean(payload.id)).run();
     } else if (action === "saveSupplierAssignments") {
       const rows = Array.isArray(payload.assignments) ? payload.assignments as AssignmentInput[] : [];
       const valid = rows.filter((value) => clean(value.billId) && clean(value.productName) && clean(value.supplierId));
