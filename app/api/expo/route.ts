@@ -23,7 +23,7 @@ type TaskInput = {
   commitmentDate?: string; notes?: string; completionReason?: string; cancellationReason?: string;
 };
 type InteractionInput = { id?: string; customerName?: string; customerPhone?: string; type?: string; details?: string; assignedTo?: string; nextFollowUp?: string; status?: string; billId?: string; cancellationReason?: string };
-const allowedCancellationReasons = new Set(["Billed", "Quality Issue", "Product Variety"]);
+const allowedCancellationReasons = new Set(["Quality Issue", "Product Variety"]);
 type AssignmentInput = { id?: string; billId?: string; billNo?: string; productId?: string; productCode?: string; productName?: string; qty?: number; supplierId?: string; purchaseCost?: number; advancePaid?: number; expectedDate?: string; status?: string; notes?: string };
 type LeadInput = { id?: string; customerName?: string; phone?: string; source?: string; interest?: string; assignedTo?: string; followUpDate?: string; status?: string; notes?: string };
 type JobCardInput = { id?: string; jobNo?: string; customerName?: string; phone?: string; billId?: string; measurements?: string; woodMaterial?: string; fabric?: string; foam?: string; polish?: string; referenceImages?: string[]; estimatedCost?: number; assignedTo?: string; expectedDate?: string; stage?: string; notes?: string };
@@ -934,7 +934,7 @@ export async function POST(request: Request) {
       await env.DB.prepare("DELETE FROM tasks WHERE id=?").bind(clean(payload.id)).run();
     } else if (action === "cancelTask") {
       const reason = clean(payload.reason);
-      if (!allowedCancellationReasons.has(reason)) return Response.json({ error: "Choose Billed, Quality Issue or Product Variety." }, { status: 400 });
+      if (!allowedCancellationReasons.has(reason)) return Response.json({ error: "Choose Quality Issue or Product Variety." }, { status: 400 });
       await env.DB.prepare("UPDATE tasks SET status='Cancelled',cancellation_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(reason, clean(payload.id)).run();
     } else if (action === "saveInteraction") {
       const value = payload.interaction as InteractionInput;
@@ -952,7 +952,7 @@ export async function POST(request: Request) {
       await env.DB.prepare("DELETE FROM customer_interactions WHERE id=?").bind(clean(payload.id)).run();
     } else if (action === "cancelInteraction") {
       const reason = clean(payload.reason);
-      if (!allowedCancellationReasons.has(reason)) return Response.json({ error: "Choose Billed, Quality Issue or Product Variety." }, { status: 400 });
+      if (!allowedCancellationReasons.has(reason)) return Response.json({ error: "Choose Quality Issue or Product Variety." }, { status: 400 });
       await env.DB.prepare("UPDATE customer_interactions SET status='Cancelled',cancellation_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(reason, clean(payload.id)).run();
     } else if (action === "saveSupplierAssignments") {
       const rows = Array.isArray(payload.assignments) ? payload.assignments as AssignmentInput[] : [];

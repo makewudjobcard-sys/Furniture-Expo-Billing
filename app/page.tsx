@@ -353,7 +353,7 @@ const taskTemplates = [
   { icon: "↗", key: "development", category: "Development", title: "Business development", details: "Review improvement ideas, staff needs and showroom growth work." },
   { icon: "₹", key: "financial", category: "Financial Commitment", title: "Payment commitment", details: "Record the payable/receivable amount and completion plan." },
 ];
-const cancellationReasons = ["Billed", "Quality Issue", "Product Variety"] as const;
+const cancellationReasons = ["Quality Issue", "Product Variety"] as const;
 function isCustomerFollowUp(value: { category?: string; title?: string; type?: string }) {
   const category = (value.category || value.type || "").toLowerCase();
   const title = (value.title || "").toLowerCase();
@@ -1817,7 +1817,7 @@ export default function Home() {
     event.preventDefault();
     if (!cancellationTarget) return;
     const reason = cancellationReason;
-    if (!cancellationReasons.includes(reason as typeof cancellationReasons[number])) return notify("Choose Billed, Quality Issue or Product Variety.");
+    if (!cancellationReasons.includes(reason as typeof cancellationReasons[number])) return notify("Choose Quality Issue or Product Variety.");
     const action = cancellationTarget.kind === "task" ? "cancelTask" : "cancelInteraction";
     const data = await mutate({ action, id: cancellationTarget.id, reason }, "Cancellation recorded with reason.");
     if (data) {
