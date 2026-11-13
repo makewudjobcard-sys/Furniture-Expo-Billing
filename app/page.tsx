@@ -1470,10 +1470,23 @@ export default function Home() {
   });
 
   function downloadBackup() {
+    let unfinishedOrderDraft: unknown = null;
+    try {
+      const draft = window.localStorage.getItem("smaarthome-order-draft");
+      unfinishedOrderDraft = draft ? JSON.parse(draft) : null;
+    } catch {
+      unfinishedOrderDraft = null;
+    }
+    const collections = ["products", "bills", "tasks", "interactions", "leads", "jobCards", "suppliers", "supplierAssignments", "auditLogs", "stockVerifications", "financeCommitments", "financeExpenses", "financeMembers", "stockEntries"] as const;
     const backup = {
       app: "Smaarthome Furniture Billing",
       exportedAt: new Date().toISOString(),
-      version: 2,
+      exportedBy: currentUser?.username || "Showroom user",
+      backupType: currentUser?.role === "md" ? "MD handover / complete showroom backup" : "Showroom-scoped backup",
+      version: 3,
+      summary: Object.fromEntries(collections.map((key) => [key, Array.isArray(state[key]) ? state[key].length : 0])),
+      imageManifest: state.products.filter((product) => product.imageKey).map((product) => ({ productCode: product.code, imageKey: product.imageKey, imageUrl: product.imageUrl })),
+      unfinishedOrderDraft,
       data: state,
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
@@ -3694,7 +3707,7 @@ export default function Home() {
                 <div className="readability-controls"><label>App font<select value={fontName} onChange={(event) => changeFont(event.target.value as FontName)}><option value="system">System / Segoe</option><option value="modern">Modern / Geist</option><option value="classic">Classic / Georgia</option><option value="friendly">Friendly / Trebuchet</option></select></label><label>Text size<select value={textScale} onChange={(event) => changeTextScale(event.target.value as TextScaleName)}><option value="small">Small</option><option value="normal">Normal</option><option value="large">Large</option></select></label><button type="button" className="secondary-action" onClick={() => setShowShortcuts(true)}>⌨ Keyboard shortcuts</button></div>
               </div>
               <div className="form-section safety-section">
-                <div><strong>Backup & offline safety</strong><p>Download a complete JSON copy. The latest synced data and unfinished order draft also stay available on this device.</p></div>
+                <div><strong>{currentUser?.role === "md" ? "MD handover backup" : "Backup & offline safety"}</strong><p>{currentUser?.role === "md" ? "Download the complete showroom backup for handover: bills, inventory, CRM, tasks, suppliers, finance, audit history and image references." : "Download a complete JSON copy. The latest synced data and unfinished order draft also stay available on this device."}</p></div>
                 <div className="safety-actions"><button type="button" className="primary-small" onClick={downloadBackup}>↓ Download data backup</button><div className={`safety-status ${online ? "online" : "offline"}`}><span>●</span><strong>{online ? "Cloud sync active" : "Offline cache active"}</strong><small>{online ? "Supabase is connected" : "Reconnect before saving final bills"}</small></div></div>
               </div>
               <div className="form-section audit-section">
